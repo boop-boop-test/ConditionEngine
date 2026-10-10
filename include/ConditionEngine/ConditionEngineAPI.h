@@ -22,11 +22,13 @@
 ///
 /// Version history (append-only):
 ///   1 - Compile/Evaluate/Describe, named conditions, custom types, watches, events
+///   2 - WatchEx (per-watch poll interval + extra triggers), Refresh, Set/GetPollInterval,
+///       CE_DEP_INVENTORY / CE_DEP_MAGIC_EFFECT / CE_DEP_ACTOR_STATE
 
 #include <stdint.h>
 #include "ConditionEngine/Export.h"
 
-#define CONDITIONENGINE_API_VERSION 1
+#define CONDITIONENGINE_API_VERSION 2
 
 #ifdef __cplusplus
 extern "C" {
@@ -64,8 +66,22 @@ enum {
     CE_DEP_IN_WATER = 1u << 15,
     CE_DEP_LOVE_SCENE = 1u << 16,
     CE_DEP_POLLED = 1u << 17,
-    CE_DEP_HOST = 1u << 18  ///< Host-signalled state (fire via NotifyEvent)
+    CE_DEP_HOST = 1u << 18,         ///< Host-signalled state (fire via NotifyEvent)
+    CE_DEP_INVENTORY = 1u << 19,    ///< v2: item counts
+    CE_DEP_MAGIC_EFFECT = 1u << 20, ///< v2: active effects, spells, perks
+    CE_DEP_ACTOR_STATE = 1u << 21   ///< v2: sneaking, sitting, dialogue, bleedout, weapon drawn, follower
 };
+
+#define CE_POLL_DEFAULT 0u           ///< Use the global poll interval
+#define CE_POLL_NEVER   0xFFFFFFFFu  ///< Only re-check on change detection / events
+
+/// v2 watch options. Set structSize = sizeof(CE_WatchOptions) for forward compatibility.
+typedef struct CE_WatchOptions {
+    uint32_t structSize;
+    int32_t fireImmediately;     ///< Non-zero: deliver the initial result too
+    uint32_t pollIntervalMs;     ///< CE_POLL_DEFAULT, CE_POLL_NEVER or milliseconds
+    uint32_t extraDependencies;  ///< CE_DEP_* bits that also trigger a re-check (e.g. CE_DEP_LOCATION)
+} CE_WatchOptions;
 
 /// Evaluates a custom condition type. `paramsJson` is the condition's JSON object.
 /// Return non-zero for true.
@@ -147,6 +163,16 @@ CONDITIONENGINE_API CE_Result ConditionEngine_RegisterType(const char* name, CE_
 CONDITIONENGINE_API CE_WatchHandle ConditionEngine_Watch(CE_Handle handle, void* actor, CE_WatchFn fn, void* userData,
                                                          int32_t fireImmediately);
 CONDITIONENGINE_API void ConditionEngine_Unwatch(CE_WatchHandle watch);
+
+/// v2: Watch with options (null options = defaults).
+CONDITIONENGINE_API CE_WatchHandle ConditionEngine_WatchEx(CE_Handle handle, void* actor, CE_WatchFn fn, void* userData,
+                                                           const CE_WatchOptions* options);
+/// v2: Re-evaluates a watch now (callback fires on change). Returns 1/0, or -1 when
+/// the watch is unknown or the world is not loaded. Main thread only.
+CONDITIONENGINE_API int32_t ConditionEngine_Refresh(CE_WatchHandle watch);
+/// v2: Default full-poll interval for watches (initially ConditionEngine.ini, 10 s).
+CONDITIONENGINE_API void ConditionEngine_SetPollInterval(uint32_t milliseconds);
+CONDITIONENGINE_API uint32_t ConditionEngine_GetPollInterval(void);
 
 /// Signals that host-owned state changed. `actor` null = all watched actors.
 CONDITIONENGINE_API void ConditionEngine_NotifyEvent(uint32_t dependencies, void* actor);

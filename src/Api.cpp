@@ -8,6 +8,7 @@
 #include "ConditionEngine/Registry.h"
 #include "ConditionEngine/Watcher.h"
 
+#include <cstddef>
 #include <mutex>
 #include <sstream>
 
@@ -246,6 +247,45 @@ CONDITIONENGINE_API CE_WatchHandle ConditionEngine_Watch(CE_Handle handle, void*
 
 CONDITIONENGINE_API void ConditionEngine_Unwatch(CE_WatchHandle watch) {
     Watcher::Get().Unwatch(watch);
+}
+
+CONDITIONENGINE_API CE_WatchHandle ConditionEngine_WatchEx(CE_Handle handle, void* actor, CE_WatchFn fn, void* userData,
+                                                           const CE_WatchOptions* options) {
+    auto condition = Lookup(handle);
+    if (!condition || !fn) return 0;
+
+    WatchOptions watchOptions;
+    // Fields are read only when the caller's struct is large enough to contain them
+    auto has = [options](std::size_t end) { return options && options->structSize >= end; };
+    if (has(offsetof(CE_WatchOptions, fireImmediately) + sizeof(int32_t))) {
+        watchOptions.fireImmediately = options->fireImmediately != 0;
+    }
+    if (has(offsetof(CE_WatchOptions, pollIntervalMs) + sizeof(uint32_t))) {
+        watchOptions.pollInterval = options->pollIntervalMs == CE_POLL_NEVER
+                                        ? WatchOptions::kNever
+                                        : std::chrono::milliseconds(options->pollIntervalMs);
+    }
+    if (has(offsetof(CE_WatchOptions, extraDependencies) + sizeof(uint32_t))) {
+        watchOptions.extraDependencies = static_cast<EventDependency>(options->extraDependencies);
+    }
+
+    return Watcher::Get().Watch(
+        condition, static_cast<RE::Actor*>(actor),
+        [fn, userData](WatchId id, RE::Actor* target, bool result) { fn(id, target, result ? 1 : 0, userData); },
+        watchOptions);
+}
+
+CONDITIONENGINE_API int32_t ConditionEngine_Refresh(CE_WatchHandle watch) {
+    auto result = Watcher::Get().Refresh(watch);
+    return result.has_value() ? (*result ? 1 : 0) : -1;
+}
+
+CONDITIONENGINE_API void ConditionEngine_SetPollInterval(uint32_t milliseconds) {
+    Watcher::Get().SetPollInterval(std::chrono::milliseconds(milliseconds));
+}
+
+CONDITIONENGINE_API uint32_t ConditionEngine_GetPollInterval(void) {
+    return static_cast<uint32_t>(Watcher::Get().GetPollInterval().count());
 }
 
 CONDITIONENGINE_API void ConditionEngine_NotifyEvent(uint32_t dependencies, void* actor) {

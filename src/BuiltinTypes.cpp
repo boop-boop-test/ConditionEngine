@@ -251,6 +251,34 @@ namespace ConditionEngine {
                                                          j.value("intervalHours", 1));
             },
             {"chance", "seedType", "salt", "intervalHours"}, {}, "Deterministic seeded chance");
+
+        // ── Vanilla Creation Kit condition functions ─────────────────────────
+        Add(r, "Game", {"GameCondition", "CK"},
+            [](const json& j) {
+                std::vector<std::string> params;
+                if (j.contains("params") && j["params"].is_array()) {
+                    for (const auto& p : j["params"]) params.push_back(p.is_string() ? p.get<std::string>() : p.dump());
+                } else {
+                    for (const char* key : {"param1", "param2"}) {
+                        if (!j.contains(key)) break;
+                        params.push_back(ReadScalarAsString(j, key));
+                    }
+                }
+                // Bare Game(IsSneaking) means "function returned non-zero"
+                const bool hasOp = j.contains("operator") || j.contains("operation");
+                const bool hasValue = j.contains("value");
+                auto op = hasOp ? ParseComparisonOperator(j)
+                                : (hasValue ? ComparisonOperator::Equal : ComparisonOperator::NotEqual);
+                return std::make_unique<GameCondition>(
+                    j.value("function", ""), std::move(params), op, j.value("value", 0.0f),
+                    GameCondition::ParseRunOn(j.contains("runOn") && j["runOn"].is_string() ? j["runOn"].get<std::string>() : ""));
+            },
+            {"function", "param1", "param2"}, "value",
+            "Any vanilla condition function, e.g. Game(GetLevel) >= 20, Game(WornHasKeyword, ArmorHeavy)");
+
+        RegisterActorConditionTypes(r);
+        RegisterGearConditionTypes(r);
+        RegisterWorldConditionTypes(r);
     }
 
 } // namespace ConditionEngine

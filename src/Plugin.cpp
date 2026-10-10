@@ -5,6 +5,7 @@
 
 #include "ConditionEngine/Presets.h"
 #include "ConditionEngine/Registry.h"
+#include "ConditionEngine/Settings.h"
 #include "ConditionEngine/Watcher.h"
 
 #include <spdlog/sinks/basic_file_sink.h>
@@ -26,9 +27,15 @@ namespace {
     void OnMessage(SKSE::MessagingInterface::Message* message) {
         switch (message->type) {
             case SKSE::MessagingInterface::kDataLoaded: {
+                const auto settings = ConditionEngine::LoadSettings(ConditionEngine::GetDefaultSettingsPath());
+                ConditionEngine::ApplyTemperatureSettings(settings);
+
                 auto count = ConditionEngine::LoadPresetDirectory(ConditionEngine::GetDefaultPresetDirectory());
                 SKSE::log::info("Loaded {} named condition presets", count);
-                ConditionEngine::Watcher::Get().Install();
+
+                auto& watcher = ConditionEngine::Watcher::Get();
+                watcher.SetPollInterval(settings.pollInterval);
+                watcher.Install(settings.detectInterval);
                 break;
             }
             case SKSE::MessagingInterface::kPreLoadGame:

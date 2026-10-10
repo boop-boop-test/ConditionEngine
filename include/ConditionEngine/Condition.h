@@ -48,10 +48,17 @@ namespace ConditionEngine {
         // Host-signalled change (e.g. DressCode player dials). Hosts fire it
         // explicitly via Watcher::NotifyEvent when their own state changes.
         Dial            = 1 << 18,
+        // Inventory contents (item counts) - container-changed events
+        Inventory       = 1 << 19,
+        // Active magic effects, spells and perks - effect-apply events + full poll
+        MagicEffect     = 1 << 20,
+        // Cheap actor flags (sneaking, sitting, dialogue, bleedout, weapon drawn,
+        // follower) - checked by the watcher's 1s change detection
+        ActorState      = 1 << 21,
     };
 
     // Total number of event dependency bits (for bucket iteration)
-    inline constexpr std::uint32_t kEventDependencyBitCount = 19;
+    inline constexpr std::uint32_t kEventDependencyBitCount = 22;
 
     constexpr EventDependency operator|(EventDependency a, EventDependency b) {
         return static_cast<EventDependency>(static_cast<std::uint32_t>(a) | static_cast<std::uint32_t>(b));

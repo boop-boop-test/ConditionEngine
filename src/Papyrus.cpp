@@ -112,14 +112,23 @@ namespace ConditionEngine::Papyrus {
         }
 
         // Sends ModEvent asEventName(strArg = watch id, numArg = 1.0/0.0, sender = actor) on change
+        // pollIntervalSeconds: 0 = global default, < 0 = never (change detection/events only)
         std::int32_t Watch(StaticFn*, RE::Actor* actor, RE::BSFixedString expression, RE::BSFixedString eventName,
-                           bool fireImmediately) {
+                           bool fireImmediately, float pollIntervalSeconds) {
             if (eventName.empty()) return 0;
             std::string error;
             auto condition = CompileCached(expression.c_str(), &error);
             if (!condition) {
                 SKSE::log::warn("ConditionEngine.Watch: {} in \"{}\"", error, expression.c_str());
                 return 0;
+            }
+
+            WatchOptions options;
+            options.fireImmediately = fireImmediately;
+            if (pollIntervalSeconds < 0.0f) {
+                options.pollInterval = WatchOptions::kNever;
+            } else if (pollIntervalSeconds > 0.0f) {
+                options.pollInterval = std::chrono::milliseconds(static_cast<long long>(pollIntervalSeconds * 1000.0f));
             }
 
             const std::string event = eventName.c_str();
@@ -129,7 +138,7 @@ namespace ConditionEngine::Papyrus {
                     SKSE::ModCallbackEvent modEvent{event, std::to_string(watchId), result ? 1.0f : 0.0f, target};
                     if (auto* source = SKSE::GetModCallbackEventSource()) source->SendEvent(&modEvent);
                 },
-                fireImmediately);
+                options);
 
             if (id != 0) {
                 std::lock_guard lock(g_watchMutex);
@@ -144,6 +153,24 @@ namespace ConditionEngine::Papyrus {
             g_scriptWatches.erase(static_cast<WatchId>(watchId));
         }
 
+        // Re-checks a watch on the next frame (its mod event fires if the result changed)
+        void RefreshWatch(StaticFn*, std::int32_t watchId) {
+            const auto id = static_cast<WatchId>(watchId);
+            if (auto* tasks = SKSE::GetTaskInterface()) {
+                tasks->AddTask([id]() { Watcher::Get().Refresh(id); });
+            }
+        }
+
+        void SetPollInterval(StaticFn*, float seconds) {
+            if (seconds > 0.0f) {
+                Watcher::Get().SetPollInterval(std::chrono::milliseconds(static_cast<long long>(seconds * 1000.0f)));
+            }
+        }
+
+        float GetPollInterval(StaticFn*) {
+            return static_cast<float>(Watcher::Get().GetPollInterval().count()) / 1000.0f;
+        }
+
         bool RegisterFunctions(VM* vm) {
             vm->RegisterFunction("Evaluate", kScriptName, Evaluate);
             vm->RegisterFunction("EvaluateNamed", kScriptName, EvaluateNamed);
@@ -155,6 +182,9 @@ namespace ConditionEngine::Papyrus {
             vm->RegisterFunction("Normalize", kScriptName, Normalize, true);
             vm->RegisterFunction("Watch", kScriptName, Watch);
             vm->RegisterFunction("Unwatch", kScriptName, Unwatch);
+            vm->RegisterFunction("RefreshWatch", kScriptName, RefreshWatch);
+            vm->RegisterFunction("SetPollInterval", kScriptName, SetPollInterval);
+            vm->RegisterFunction("GetPollInterval", kScriptName, GetPollInterval);
             return true;
         }
     }

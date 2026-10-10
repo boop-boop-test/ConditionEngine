@@ -56,4 +56,21 @@ namespace ConditionEngine::Forms {
         return RE::TESForm::LookupByID(formId);
     }
 
+    RE::TESForm* LookupAny(const std::string& text) {
+        if (text.empty()) return nullptr;
+        if (_stricmp(text.c_str(), "player") == 0 || _stricmp(text.c_str(), "PlayerRef") == 0) {
+            return RE::PlayerCharacter::GetSingleton();
+        }
+        if (IsFormString(text)) return ParseFormString(text);
+        if (text.size() > 2 && text[0] == '0' && (text[1] == 'x' || text[1] == 'X')) {
+            try {
+                std::size_t pos = 0;
+                auto id = static_cast<RE::FormID>(std::stoul(text, &pos, 16));
+                if (pos == text.size()) return RE::TESForm::LookupByID(id);
+            } catch (...) {
+            }
+        }
+        return RE::TESForm::LookupByEditorID(text);
+    }
+
 } // namespace ConditionEngine::Forms

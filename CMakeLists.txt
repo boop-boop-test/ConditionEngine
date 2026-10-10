@@ -55,12 +55,15 @@ set(CONDITION_ENGINE_HEADERS
     include/ConditionEngine/Presets.h
     include/ConditionEngine/Registry.h
     include/ConditionEngine/Watcher.h
+    include/ConditionEngine/Conditions/ActorConditions.h
     include/ConditionEngine/Conditions/ActorStateConditions.h
     include/ConditionEngine/Conditions/ActorValueConditions.h
     include/ConditionEngine/Conditions/CallbackCondition.h
     include/ConditionEngine/Conditions/ConstantCondition.h
     include/ConditionEngine/Conditions/EquipmentConditions.h
     include/ConditionEngine/Conditions/FactionConditions.h
+    include/ConditionEngine/Conditions/GameCondition.h
+    include/ConditionEngine/Conditions/GearConditions.h
     include/ConditionEngine/Conditions/GlobalVariableConditions.h
     include/ConditionEngine/Conditions/LocationConditions.h
     include/ConditionEngine/Conditions/LogicalConditions.h
@@ -73,6 +76,8 @@ set(CONDITION_ENGINE_HEADERS
     include/ConditionEngine/Conditions/TemperatureConditions.h
     include/ConditionEngine/Conditions/TimeConditions.h
     include/ConditionEngine/Conditions/WeatherConditions.h
+    include/ConditionEngine/Conditions/WorldConditions.h
+    include/ConditionEngine/Settings.h
 )
 
 set(CONDITION_ENGINE_SOURCES
@@ -84,10 +89,13 @@ set(CONDITION_ENGINE_SOURCES
     src/Presets.cpp
     src/Registry.cpp
     src/Watcher.cpp
+    src/Conditions/ActorConditions.cpp
     src/Conditions/ActorStateConditions.cpp
     src/Conditions/ActorValueConditions.cpp
     src/Conditions/EquipmentConditions.cpp
     src/Conditions/FactionConditions.cpp
+    src/Conditions/GameCondition.cpp
+    src/Conditions/GearConditions.cpp
     src/Conditions/GlobalVariableConditions.cpp
     src/Conditions/LocationConditions.cpp
     src/Conditions/LogicalConditions.cpp
@@ -100,6 +108,8 @@ set(CONDITION_ENGINE_SOURCES
     src/Conditions/TemperatureConditions.cpp
     src/Conditions/TimeConditions.cpp
     src/Conditions/WeatherConditions.cpp
+    src/Conditions/WorldConditions.cpp
+    src/Settings.cpp
 )
 
 # DLL-only: exported C API, Papyrus natives and the SKSE plugin entry point.

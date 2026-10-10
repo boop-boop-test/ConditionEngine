@@ -118,6 +118,36 @@ int main() {
     ExpectCompiled("true", "true");
     ExpectCompiled("{\"type\": \"Combat\", \"expectedState\": false}", "Combat(false)");
 
+    // ── New condition types (parse + factory + ToJson, no game access) ───────
+    ExpectJson("Game(GetLevel) >= 20", {{"type", "Game"}, {"function", "GetLevel"}, {"value", 20}, {"operator", ">="}});
+    ExpectJson("Game(WornHasKeyword, ArmorHeavy)",
+               {{"type", "Game"}, {"function", "WornHasKeyword"}, {"param1", "ArmorHeavy"}});
+    ExpectCompiled("Game(IsSneaking)", "Game(IsSneaking)");
+    ExpectCompiled("Game(GetActorValuePercent, Health) < 0.5", "Game(GetActorValuePercent, Health) < 0.5");
+    ExpectCompiled("Game(GetDistance, player, runOn=Target) < 500",
+                   "Game(GetDistance, player, runOn=Target) < 500.0");
+    ExpectCompiled("Sneaking && !InDialogue", "Sneaking(true) && !InDialogue(true)");
+    ExpectCompiled("WeaponDrawn(false)", "WeaponDrawn(false)");
+    ExpectCompiled("Level >= 20", "Level >= 20");
+    ExpectCompiled("Level(10)", "Level >= 10");
+    ExpectCompiled("Sex(Female)", "Sex(Female)");
+    ExpectCompiled("HasKeyword([Vampire, ActorTypeUndead])", "HasKeyword([Vampire, ActorTypeUndead])");
+    ExpectCompiled("WornHasKeyword(ClothingRich, matchAny=false)", "WornHasKeyword(ClothingRich, false)");
+    ExpectCompiled("HasPerk(\"0x000BE127|Skyrim.esm\")", "HasPerk(\"0x000BE127|Skyrim.esm\")");
+    ExpectCompiled("HasItem(Gold001)", "ItemCount(Gold001) >= 1");  // HasItem is ItemCount >= 1
+    ExpectCompiled("ItemCount(Torch01) < 2", "ItemCount(Torch01) < 2");
+    ExpectCompiled("EquippedWeaponType([Bow, Crossbow])", "EquippedWeaponType([Bow, Crossbow])");
+    ExpectCompiled("Holding(Spell, hand=Left)", "EquippedWeaponType(Spell, Left)");
+    ExpectCompiled("Worldspace(DLC2SolstheimWorld)", "Worldspace(DLC2SolstheimWorld)");
+    ExpectCompiled("Hold(Whiterun)", "Hold(Whiterun)");
+    ExpectCompiled("InLocation(\"Dragonsreach\", false)", "InLocation(Dragonsreach, false)");
+    ExpectCompiled("InCell(WhiterunBanneredMare)", "InCell(WhiterunBanneredMare)");
+    ExpectCompiled("IsPluginLoaded(\"Frostfall.esp\")", "IsPluginLoaded(\"Frostfall.esp\")");
+    ExpectCompiled("Holiday([Saturalia, NewLifeFestival])", "Holiday([Saturalia, NewLifeFestival])");
+    Check(HolidayCondition::HolidayOn(11, 25) == "Saturalia", "Saturalia is 25 Evening Star");
+    Check(HolidayCondition::HolidayOn(3, 1).empty(), "no holiday on 1 Rain's Hand");
+    ExpectError("Sneaking > 1", "does not support comparisons");
+
     // ── Parameter substitution then compile ──────────────────────────────────
     {
         auto tree = Parse("ActorValue(Health) < ${Threshold}");

@@ -42,5 +42,14 @@ String   Function Normalize(String asExpression) Global Native  ; canonical expr
 ; result is 1.0 (true) or 0.0 (false). Returns the watch id, 0 on failure.
 ; Watches are cleared on every load - create them again from OnPlayerLoadGame.
 ;
-Int      Function Watch(Actor akActor, String asExpression, String asEventName, Bool abFireImmediately = False) Global Native
+; afPollIntervalSeconds: 0 = global default (10 s, see ConditionEngine.ini),
+; below 0 = never poll (re-check only on change detection and game events).
+Int      Function Watch(Actor akActor, String asExpression, String asEventName, Bool abFireImmediately = False, Float afPollIntervalSeconds = 0.0) Global Native
          Function Unwatch(Int aiWatchId) Global Native
+         Function RefreshWatch(Int aiWatchId) Global Native   ; re-check now; event fires only if the result changed
+
+;
+; Full re-check interval for watches (change detection still runs every second)
+;
+         Function SetPollInterval(Float afSeconds) Global Native
+Float    Function GetPollInterval() Global Native
