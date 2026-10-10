@@ -1,0 +1,16 @@
+{
+    "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg/master/scripts/vcpkg.schema.json",
+    "name": "condition-engine",
+    "version-string": "1.0.0",
+    "description": "Reusable condition/expression evaluator for Skyrim SKSE plugins.",
+    "license": "Apache-2.0",
+    "dependencies": [
+        "directxmath",
+        "directxtk",
+        "fmt",
+        "nlohmann-json",
+        "rapidcsv",
+        "spdlog",
+        "xbyak"
+    ]
+}

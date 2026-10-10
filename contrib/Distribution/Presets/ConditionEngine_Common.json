@@ -1,0 +1,14 @@
+{
+    // Shared condition presets shipped with ConditionEngine.
+    // Reference them from any expression as @Name, e.g. "@IsNight && @IsOutdoors".
+    "conditions": {
+        "IsNight": "Time(20, 6)",
+        "IsDay": "!@IsNight",
+        "IsIndoors": "InteriorExterior(true)",
+        "IsOutdoors": "InteriorExterior(false)",
+        "BadWeather": "Weather(Rainy) || Weather(Snow)",
+        "InSettlement": "LocationType(City) || LocationType(Town)",
+        "LowHealth": "ActorValue(Health, usePercentage=true) < 30",
+        "IsBusy": "Combat || Swimming || Mounting || Sleeping"
+    }
+}
