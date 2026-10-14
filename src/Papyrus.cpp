@@ -4,6 +4,7 @@
 #include "Papyrus.h"
 
 #include "ConditionEngine/EvaluationContext.h"
+#include "ConditionEngine/Explain.h"
 #include "ConditionEngine/Expression.h"
 #include "ConditionEngine/Registry.h"
 #include "ConditionEngine/Value.h"
@@ -153,6 +154,33 @@ namespace ConditionEngine::Papyrus {
                     result = static_cast<float>(ReadValueAvailable(*value, context).value);
                 }
                 vm->ReturnLatentResult<float>(stackId, result);
+            });
+            return Latent::kStarted;
+        }
+
+        // Plain-text explanation of a condition (or, if it is not one, a value) for the actor
+        Latent Explain(InternalVM* vm, RE::VMStackID stackId, StaticFn*, RE::Actor* actor, RE::BSFixedString expression) {
+            auto* tasks = SKSE::GetTaskInterface();
+            if (!tasks) return Latent::kFailed;
+            const std::string text = expression.c_str();
+            const RE::ActorHandle handle = actor ? actor->GetHandle() : RE::ActorHandle{};
+            const bool usePlayer = actor == nullptr;
+            tasks->AddTask([vm, stackId, text, handle, usePlayer]() {
+                std::string out;
+                RE::Actor* target = usePlayer ? RE::PlayerCharacter::GetSingleton() : handle.get().get();
+                std::string error;
+                if (!target) {
+                    out = "actor not loaded";
+                } else if (auto condition = CompileCached(text, &error)) {
+                    EvaluationContext context(target);
+                    out = Explain::ToText(Explain::ExplainCondition(*condition, context));
+                } else if (auto value = CompileValueCached(text, &error)) {
+                    EvaluationContext context(target);
+                    out = Explain::ToText(Explain::ExplainValue(*value, context));
+                } else {
+                    out = "not a condition or value: " + error;
+                }
+                vm->ReturnLatentResult<RE::BSFixedString>(stackId, RE::BSFixedString(out));
             });
             return Latent::kStarted;
         }
@@ -358,6 +386,7 @@ namespace ConditionEngine::Papyrus {
             vm->RegisterFunction("GetCatalog", kScriptName, GetCatalog, true);
             vm->RegisterFunction("SetPollInterval", kScriptName, SetPollInterval);
             RegisterLatent<float>(vm, "GetValue", GetValue);
+            RegisterLatent<RE::BSFixedString>(vm, "Explain", Explain);
             vm->RegisterFunction("SetValue", kScriptName, SetValue);
             vm->RegisterFunction("SetGlobalValue", kScriptName, SetGlobalValue);
             vm->RegisterFunction("ClearValue", kScriptName, ClearValue);

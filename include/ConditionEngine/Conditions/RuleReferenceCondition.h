@@ -41,11 +41,12 @@ namespace ConditionEngine {
         // Key used for registry lookup and memoization
         const std::string& GetKey() const { return ruleUUID.empty() ? ruleName : ruleUUID; }
 
-    private:
         // The named condition, looked up by key (then display name). Engine-owned ones are
         // kept until the availability revision moves; host-resolved ones (DressCode rules)
         // are looked up every time, since hosts change them without moving it.
         std::shared_ptr<const Condition> Resolve() const;
+
+    private:
         void Unbind() {
             std::lock_guard lock(bindMutex_);
             boundRevision_ = ~0ull;

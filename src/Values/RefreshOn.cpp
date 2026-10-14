@@ -23,13 +23,8 @@ namespace ConditionEngine::RefreshOn {
             }
             if (!node.is_object()) return;
             const auto type = Lower(node.value("type", std::string()));
-            if (type == "papyruscall") {
-                PapyrusCallCondition::Call call;
-                call.script = node.value("script", "");
-                call.function = node.value("function", "");
-                call.form = node.value("form", "");
-                call.passActor = node.value("passActor", true);
-                out.push_back(std::move(call));
+            if (auto call = PapyrusCallCondition::CallFromJson(node)) {
+                out.push_back(std::move(*call));
                 return;
             }
             if (type == "namedvalue") {

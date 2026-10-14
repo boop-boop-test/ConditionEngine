@@ -29,12 +29,17 @@ namespace ConditionEngine {
             std::string function;
             std::string form;  // empty = static call
             bool passActor = true;
+            bool passNone = false;           // first argument None (e.g. StorageUtil's global storage)
+            std::vector<nlohmann::json> args;  // after the actor / None: strings, ints, floats, bools
             double intervalSeconds = 1.0;
-            std::string key;  // lowercase "form|script.function"; filled by the condition (bind at compile)
+            std::string key;  // lowercase identity (form, script, function, arguments); bind at compile
 
-            // The key for script / function / form, lowercase
+            // The key for script / function / form / arguments, lowercase
             static std::string MakeKey(const Call& call);
         };
+
+        // The call a PapyrusCall or StorageUtil node makes, from its JSON (null for other types)
+        static std::optional<Call> CallFromJson(const nlohmann::json& node);
 
         PapyrusCallCondition(Call call, ComparisonOperator op, double value);
 
@@ -47,10 +52,30 @@ namespace ConditionEngine {
         EventDependency GetEventDependencies() const override { return EventDependency::Value | EventDependency::Script; }
         std::vector<std::string> Validate() const override;
 
-    private:
+    protected:
         Call call_;
         ComparisonOperator op_;
         double value_;
+    };
+
+    // StorageUtil(key, kind=float|int, global=false) - a PapyrusUtil StorageUtil value stored on
+    // the actor (or globally), read through Papyrus like PapyrusCall: asynchronous and cached.
+    // Needs PapyrusUtil; without it the value reads Unavailable.
+    class StorageUtilCondition : public PapyrusCallCondition {
+    public:
+        StorageUtilCondition(std::string key, bool integer, bool global, double intervalSeconds, ComparisonOperator op,
+                             double value);
+
+        static Call MakeCall(const std::string& key, bool integer, bool global, double intervalSeconds);
+
+        std::string GetDescription() const override;
+        nlohmann::json ToJson() const override;
+        std::unique_ptr<Condition> Clone() const override;
+
+    private:
+        std::string storageKey_;
+        bool integer_;
+        bool global_;
     };
 
     // Shared result cache and dispatcher behind PapyrusCall

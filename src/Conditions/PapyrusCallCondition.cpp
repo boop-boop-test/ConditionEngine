@@ -36,6 +36,40 @@ namespace ConditionEngine {
             return std::nullopt;
         }
 
+        // Arguments built at dispatch time: the actor (or None), then the call's extra arguments
+        class Arguments final : public RE::BSScript::IFunctionArguments {
+        public:
+            Arguments(RE::Actor* actor, const PapyrusCallCondition::Call& call)
+                : actor_(actor), passActor_(call.passActor), passNone_(call.passNone), args_(call.args) {}
+
+            bool operator()(RE::BSScrapArray<RE::BSScript::Variable>& a_dst) const override {
+                const std::size_t lead = (passActor_ || passNone_) ? 1 : 0;
+                a_dst.resize(static_cast<std::uint32_t>(lead + args_.size()));
+                if (passActor_) {
+                    RE::Actor* actor = actor_;
+                    RE::BSScript::PackValue(&a_dst[0], std::move(actor));
+                } else if (passNone_) {
+                    a_dst[0].SetNone();
+                }
+                for (std::size_t i = 0; i < args_.size(); ++i) {
+                    auto& v = a_dst[static_cast<std::uint32_t>(lead + i)];
+                    const auto& a = args_[i];
+                    if (a.is_string()) v.SetString(a.get<std::string>());
+                    else if (a.is_boolean()) v.SetBool(a.get<bool>());
+                    else if (a.is_number_integer()) v.SetSInt(a.get<std::int32_t>());
+                    else if (a.is_number()) v.SetFloat(a.get<float>());
+                    else v.SetNone();
+                }
+                return true;
+            }
+
+        private:
+            RE::Actor* actor_;
+            bool passActor_;
+            bool passNone_;
+            std::vector<nlohmann::json> args_;
+        };
+
         // Starts the call; false (with `error`) when it could not be dispatched
         bool Dispatch(const PapyrusCallCondition::Call& call, RE::Actor* actor,
                       std::function<void(RE::BSScript::Variable)> onResult, std::string& error) {
@@ -45,7 +79,7 @@ namespace ConditionEngine {
                 return false;
             }
             RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> callback{new Callback(std::move(onResult))};
-            auto* args = call.passActor ? RE::MakeFunctionArguments(std::move(actor)) : RE::MakeFunctionArguments();
+            RE::BSScript::IFunctionArguments* args = new Arguments(actor, call);
 
             if (call.form.empty()) {
                 if (vm->DispatchStaticCall(call.script, call.function, args, callback)) return true;
@@ -87,7 +121,32 @@ namespace ConditionEngine {
     }
 
     std::string PapyrusCallCondition::Call::MakeKey(const Call& call) {
-        return Lower(call.form + "|" + call.script + "." + call.function);
+        std::string key = Lower(call.form + "|" + call.script + "." + call.function);
+        if (call.passNone) key += "|none";
+        if (!call.args.empty()) key += Lower(nlohmann::json(call.args).dump());
+        return key;
+    }
+
+    std::optional<PapyrusCallCondition::Call> PapyrusCallCondition::CallFromJson(const nlohmann::json& node) {
+        if (!node.is_object()) return std::nullopt;
+        const auto type = Lower(node.value("type", std::string()));
+        if (type == "papyruscall") {
+            Call call;
+            call.script = node.value("script", "");
+            call.function = node.value("function", "");
+            call.form = node.value("form", "");
+            call.passActor = node.value("passActor", true);
+            call.intervalSeconds = node.value("interval", 1.0);
+            if (node.contains("args") && node["args"].is_array()) call.args = node["args"].get<std::vector<nlohmann::json>>();
+            call.key = Call::MakeKey(call);
+            return call;
+        }
+        if (type == "storageutil") {
+            auto call = StorageUtilCondition::MakeCall(node.value("key", ""), node.value("kind", "float") == "int",
+                                                       node.value("global", false), node.value("interval", 1.0));
+            return call;
+        }
+        return std::nullopt;
     }
 
     void PapyrusCalls::Expire(const PapyrusCallCondition::Call& call, RE::FormID actorId) {
@@ -234,6 +293,7 @@ namespace ConditionEngine {
         nlohmann::json json{{"type", "PapyrusCall"}, {"script", call_.script}, {"function", call_.function}};
         if (!call_.form.empty()) json["form"] = call_.form;
         if (!call_.passActor) json["passActor"] = false;
+        if (!call_.args.empty()) json["args"] = call_.args;
         if (call_.intervalSeconds != 1.0) json["interval"] = call_.intervalSeconds;
         // "!= 0" is the default (true-ish) and is left implicit
         if (!(op_ == ComparisonOperator::NotEqual && value_ == 0.0)) {
@@ -252,6 +312,47 @@ namespace ConditionEngine {
         if (call_.script.empty()) errors.push_back("PapyrusCall: no script specified");
         if (call_.function.empty()) errors.push_back("PapyrusCall: no function specified");
         return errors;
+    }
+
+    // ── StorageUtil ──────────────────────────────────────────────────────────
+
+    PapyrusCallCondition::Call StorageUtilCondition::MakeCall(const std::string& key, bool integer, bool global,
+                                                               double intervalSeconds) {
+        Call call;
+        call.script = "StorageUtil";
+        call.function = integer ? "GetIntValue" : "GetFloatValue";
+        call.passActor = !global;
+        call.passNone = global;
+        call.args = {nlohmann::json(key), integer ? nlohmann::json(0) : nlohmann::json(0.0)};  // key, missing value
+        call.intervalSeconds = intervalSeconds;
+        call.key = Call::MakeKey(call);
+        return call;
+    }
+
+    StorageUtilCondition::StorageUtilCondition(std::string key, bool integer, bool global, double intervalSeconds,
+                                               ComparisonOperator op, double value)
+        : PapyrusCallCondition(MakeCall(key, integer, global, intervalSeconds), op, value),
+          storageKey_(std::move(key)), integer_(integer), global_(global) {}
+
+    std::string StorageUtilCondition::GetDescription() const {
+        return "StorageUtil " + storageKey_ + (global_ ? " (global)" : "") + " " + ComparisonOpToString(op_) + " " +
+               std::format("{}", value_);
+    }
+
+    nlohmann::json StorageUtilCondition::ToJson() const {
+        nlohmann::json json{{"type", "StorageUtil"}, {"key", storageKey_}};
+        if (integer_) json["kind"] = "int";
+        if (global_) json["global"] = true;
+        if (call_.intervalSeconds != 1.0) json["interval"] = call_.intervalSeconds;
+        if (!(op_ == ComparisonOperator::NotEqual && value_ == 0.0)) {
+            json["operator"] = ComparisonOpToName(op_);
+            json["value"] = value_;
+        }
+        return json;
+    }
+
+    std::unique_ptr<Condition> StorageUtilCondition::Clone() const {
+        return std::make_unique<StorageUtilCondition>(storageKey_, integer_, global_, call_.intervalSeconds, op_, value_);
     }
 
 } // namespace ConditionEngine

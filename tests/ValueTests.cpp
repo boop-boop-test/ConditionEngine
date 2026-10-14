@@ -3,6 +3,7 @@
 
 #include "ConditionEngine/ConditionEngine.h"
 #include "ConditionEngine/Availability.h"
+#include "ConditionEngine/Explain.h"
 #include "ConditionEngine/Expression.h"
 #include "ConditionEngine/FirstMatchList.h"
 #include "ConditionEngine/Stats.h"
@@ -691,6 +692,62 @@ void RunValueTests(CheckFn check) {
         // Built-in cost classes
         Check(Expression::CompileAny("Time(20, 6)", &error)->Cost() == 1, "Time is a snapshot read");
         Check(Expression::CompileAny("PapyrusCall(A, B)", &error)->Cost() == 5, "PapyrusCall is the most expensive");
+    }
+
+    // ── StorageUtil (syntax only; reading needs the game) ────────────────────
+    {
+        ExpectConditionJson("StorageUtil(hunger) > 50",
+                            {{"type", "StorageUtil"}, {"key", "hunger"}, {"value", 50}, {"operator", ">"}});
+        ExpectValueJson("StorageUtil(mood, kind=int, global=true)",
+                        {{"type", "StorageUtil"}, {"key", "mood"}, {"kind", "int"}, {"global", true}});
+        std::string error;
+        auto condition = Expression::CompileAny("StorageUtil(hunger, interval=5) > 50", &error);
+        Check(condition && Expression::ToExpression(*condition) == "StorageUtil(hunger, interval=5.0) > 50.0",
+              "StorageUtil prints as itself: " + (condition ? Expression::ToExpression(*condition) : error));
+        Check(condition && condition->Cost() == 5, "StorageUtil costs like a Papyrus call");
+        const auto a = CollectValueKeys(json{{"type", "StorageUtil"}, {"key", "a"}});
+        const auto b = CollectValueKeys(json{{"type", "StorageUtil"}, {"key", "b"}});
+        Check(a.size() == 1 && b.size() == 1 && *a.begin() != *b.begin(), "each key is its own cached call");
+        const auto g = CollectValueKeys(json{{"type", "StorageUtil"}, {"key", "a"}, {"global", true}});
+        Check(*g.begin() != *a.begin(), "global and per-actor storage are different calls");
+        ExpectConditionJson("PapyrusCall(MyScript, GetLevel, args=[\"x\", 2]) > 1",
+                            {{"type", "PapyrusCall"}, {"script", "MyScript"}, {"function", "GetLevel"},
+                             {"args", {"x", 2}}, {"value", 1}, {"operator", ">"}});
+    }
+
+    // ── Explain ──────────────────────────────────────────────────────────────
+    {
+        std::string error;
+        EvaluationContext context(nullptr);
+        Define("ex_h", json{{"pushed", true}, {"unit", "%"}});
+        pushed.Set(nullptr, "ex_h", 42);
+
+        auto condition = Expression::CompileAny("TestExpensiveTrue && $ex_h > 80", &error);
+        const auto e = Explain::ExplainCondition(*condition, context);
+        Check(e["state"] == "false" && e["children"].size() == 2, "explains the group: " + e.dump());
+        Check(e["children"][0]["state"] == "skipped", "the expensive part was not read (cheaper part decided)");
+        const auto compare = e["children"][1];
+        Check(compare["state"] == "false" && compare["children"][0]["value"] == 42 && compare["children"][1]["value"] == 80,
+              "the comparison shows both numbers: " + compare.dump());
+        const auto text = Explain::ToText(e);
+        Check(text.find("[F] TestExpensiveTrue && $ex_h > 80") != std::string::npos &&
+                  text.find("$ex_h = 42%") != std::string::npos && text.find("[-] TestExpensiveTrue") != std::string::npos,
+              "text form:\n" + text);
+
+        const auto folded = Explain::ExplainCondition(*Expression::CompileAny("false && TestCheapFalse", &error), context);
+        Check(folded["state"] == "false" && folded.contains("note"), "a folded group says so");
+
+        pushed.Set(nullptr, "prov_low", 10);
+        auto combined = Expression::CompileValueAny("$pv_hunger", &error);
+        const auto v = Explain::ExplainValue(*combined, context);
+        Check(v["value"] == 10 && v["from"] == "prov_low" && v["children"].size() == 2,
+              "a combined value lists its sources and which answered: " + v.dump());
+
+        auto missing = Expression::CompileAny("$nothing_here > 1", &error);
+        const auto m = Explain::ExplainCondition(*missing, context);
+        Check(m["state"] == "unavailable" && m.value("reason", "").find("no value named") != std::string::npos,
+              "an unavailable part explains why: " + m.dump());
+        pushed.ClearAll();
     }
 
     // ── refreshOn (issue 089) ────────────────────────────────────────────────

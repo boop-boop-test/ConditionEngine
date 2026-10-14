@@ -84,3 +84,8 @@ Bool     Function RegisterNamedValue(String asName, String asDefinition) Global 
 ;   Event OnValueChanged(String eventName, String watchId, Float value, Form akActor)
 ; afPollIntervalSeconds: 0 = global default, below 0 = only on events. Stop with Unwatch.
 Int      Function WatchValue(Actor akActor, String asNameOrExpr, String asEventName, Float afMinStep = 0.0, Float afPollIntervalSeconds = 0.0, Bool abFireImmediately = False) Global Native
+
+; Why a condition is true / false (or what a value reads) for the actor right now, as
+; indented text: each part's state ([T] [F] [P]ending [U]navailable [-] skipped), the numbers
+; involved and the reasons. Latent. Print it with Debug.Trace or a message box.
+String   Function Explain(Actor akActor, String asExpression) Global Native

@@ -114,6 +114,13 @@ CONDITIONENGINE_API uint32_t ConditionEngine_Describe(CE_Handle handle, char* bu
 /// Newline-separated configuration errors; returns 1 (empty string) when valid.
 CONDITIONENGINE_API uint32_t ConditionEngine_Validate(CE_Handle handle, char* buf, uint32_t bufSize);
 
+/// Main thread. Why the condition is true / false for the actor right now: each part's
+/// state (true, false, pending, unavailable, skipped), reason, and the numbers involved.
+/// `asText` non-zero: indented plain text ("[F] $hunger > 80 ..."), else JSON:
+///   {"expression", "state", "reason", "value", "from", "note", "children": [...]}
+CONDITIONENGINE_API uint32_t ConditionEngine_Explain(CE_Handle handle, void* actor, int32_t asText, char* buf,
+                                                     uint32_t bufSize);
+
 // ── Named conditions ─────────────────────────────────────────────────────────
 // Referenced from expressions as @Name or Rule("Name").
 
@@ -297,6 +304,10 @@ CONDITIONENGINE_API void ConditionEngine_ReleaseValue(CE_ValueHandle value);
 CONDITIONENGINE_API CE_Result ConditionEngine_EvaluateValue(CE_ValueHandle value, void* actor, CE_ValueSample* out,
                                                             char* reasonBuf, uint32_t reasonBufSize);
 CONDITIONENGINE_API uint32_t ConditionEngine_GetValueDependencies(CE_ValueHandle value);
+/// Main thread. ConditionEngine_Explain for a value: its number, status, the provider that
+/// answered, and the parts it was computed from.
+CONDITIONENGINE_API uint32_t ConditionEngine_ExplainValue(CE_ValueHandle value, void* actor, int32_t asText, char* buf,
+                                                          uint32_t bufSize);
 /// Same JSON as ConditionEngine_GetAvailability
 CONDITIONENGINE_API uint32_t ConditionEngine_GetValueAvailability(CE_ValueHandle value, char* buf, uint32_t bufSize);
 CONDITIONENGINE_API uint32_t ConditionEngine_ValueToExpression(CE_ValueHandle value, char* buf, uint32_t bufSize);

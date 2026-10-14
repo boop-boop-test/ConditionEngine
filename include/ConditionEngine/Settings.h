@@ -11,6 +11,9 @@
 //   fScale = 1.0                   ; temperature = global * fScale + fOffset
 //   fOffset = 0.0
 //
+//   [Console]
+//   sReplaceCommand = TestCode     ; unused vanilla console command that becomes "ce" (empty: off)
+//
 // Without sGlobal, Temperature conditions see a fixed 20 unless a host or plugin
 // sets a provider (Registry::SetTemperatureProvider).
 
@@ -27,6 +30,7 @@ namespace ConditionEngine {
         std::string temperatureGlobal;
         float temperatureScale = 1.0f;
         float temperatureOffset = 0.0f;
+        std::string consoleCommand = "TestCode";  // ConditionEngine.dll only
     };
 
     // Data/SKSE/Plugins/ConditionEngine.ini

@@ -468,6 +468,8 @@ namespace ConditionEngine {
                      Form("form", "Bound To", {"Quest"})
                          .Describe("Form whose script has the method; empty = a global (static) function"),
                      Bool("passActor", "Pass the actor as the argument", true),
+                     Widget("args", "Extra Arguments", "json")
+                         .Describe("Arguments after the actor: strings, ints, floats or bools, e.g. [\"hunger\", 0.0]"),
                      Float("interval", "Refresh (seconds)", 1.0).Range(0.05, 3600),
                      Comparison("operator", "Operator", "NotEqual"),
                      Float("value", "Value", 0)})
@@ -481,12 +483,37 @@ namespace ConditionEngine {
                 call.form = j.value("form", "");
                 call.passActor = j.value("passActor", true);
                 call.intervalSeconds = j.value("interval", 1.0);
+                if (j.contains("args") && j["args"].is_array()) call.args = j["args"].get<std::vector<json>>();
                 // Bare PapyrusCall(...) means "returned non-zero"
                 const bool hasOp = j.contains("operator") || j.contains("operation");
                 const bool hasValue = j.contains("value");
                 auto op = hasOp ? ParseComparisonOperator(j)
                                 : (hasValue ? ComparisonOperator::Equal : ComparisonOperator::NotEqual);
                 return std::make_unique<PapyrusCallCondition>(std::move(call), op, j.value("value", 0.0));
+            })
+            .Register(r);
+
+        TypeBuilder("StorageUtil", "StorageUtil Value", "script")
+            .Icon("🗃️")
+            .Describe("A PapyrusUtil StorageUtil number stored on the actor (or globally); read through Papyrus, "
+                      "asynchronous and cached. Needs PapyrusUtil.")
+            .Fields({String("key", "Key").Required(),
+                     Enum("kind", "Kind", Options({"float", "int"}), "float"),
+                     Bool("global", "Global (not per actor)", false),
+                     Float("interval", "Refresh (seconds)", 1.0).Range(0.05, 3600),
+                     Comparison("operator", "Operator", "NotEqual"),
+                     Float("value", "Value", 0)})
+            .Positional({"key"})
+            .Compare("value")
+            .Value({})
+            .Factory([](const json& j) {
+                const bool hasOp = j.contains("operator") || j.contains("operation");
+                const bool hasValue = j.contains("value");
+                auto op = hasOp ? ParseComparisonOperator(j)
+                                : (hasValue ? ComparisonOperator::Equal : ComparisonOperator::NotEqual);
+                return std::make_unique<StorageUtilCondition>(j.value("key", ""), j.value("kind", "float") == "int",
+                                                              j.value("global", false), j.value("interval", 1.0), op,
+                                                              j.value("value", 0.0));
             })
             .Register(r);
 
@@ -566,7 +593,7 @@ namespace ConditionEngine {
                  "HasItem", "EquippedWeaponType", "Worldspace", "Hold", "InLocation", "InCell"}},
             {3, {"Game"}},
             {4, {"ScriptValue"}},
-            {5, {"PapyrusCall"}},
+            {5, {"PapyrusCall", "StorageUtil"}},
         };
         for (const auto& [cost, names] : costs) {
             for (const char* name : names) r.SetTypeCost(name, cost);

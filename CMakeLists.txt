@@ -50,6 +50,7 @@ set(CONDITION_ENGINE_HEADERS
     include/ConditionEngine/ConditionEngine.h
     include/ConditionEngine/ConditionEngineAPI.h
     include/ConditionEngine/EvaluationContext.h
+    include/ConditionEngine/Explain.h
     include/ConditionEngine/Export.h
     include/ConditionEngine/Expression.h
     include/ConditionEngine/FirstMatchList.h
@@ -96,6 +97,7 @@ set(CONDITION_ENGINE_SOURCES
     src/BuiltinTypes.cpp
     src/Condition.cpp
     src/EvaluationContext.cpp
+    src/Explain.cpp
     src/Expression.cpp
     src/FirstMatchList.cpp
     src/Forms.cpp
@@ -135,6 +137,7 @@ set(CONDITION_ENGINE_SOURCES
 # DLL-only: exported C API, Papyrus natives and the SKSE plugin entry point.
 set(CONDITION_ENGINE_DLL_SOURCES
     src/Api.cpp
+    src/Console.cpp
     src/Papyrus.cpp
     src/Plugin.cpp
 )

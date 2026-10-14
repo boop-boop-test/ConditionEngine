@@ -32,6 +32,11 @@ namespace ConditionEngine {
         }
 
         std::optional<bool> ConstantResult() const override { return constant_; }
+
+        // Read-only views for tools (Explain): children in written order, and the indices
+        // evaluated, in evaluation order
+        const std::vector<std::unique_ptr<Condition>>& GetChildren() const { return children; }
+        const std::vector<std::size_t>& GetEvaluationOrder() const { return order_; }
         int Cost() const override { return cost_; }
 
     private:

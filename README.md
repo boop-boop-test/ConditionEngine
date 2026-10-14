@@ -47,7 +47,7 @@ ConditionEngine_Watch(h, actor, [](CE_WatchHandle, void* a, int32_t result, void
 }, nullptr, &options);
 ```
 
-**Evaluation order**: every type has a cost class (0 constant, 1 snapshot read, 2 engine read, 3 `Game(...)`, 4 script property, 5 `PapyrusCall`; C API types declare `"cost"`, default 3). And / Or groups evaluate their children cheapest first, skip duplicates, and fold constants (`false && x` is false without reading `x`); the written order is kept for saving and display. Literal math is computed once.
+**Evaluation order**: every type has a cost class (0 constant, 1 snapshot read, 2 engine read, 3 `Game(...)`, 4 script property, 5 `PapyrusCall` / `StorageUtil`; C API types declare `"cost"`, default 3). And / Or groups evaluate their children cheapest first, skip duplicates, and fold constants (`false && x` is false without reading `x`); the written order is kept for saving and display. Literal math is computed once.
 
 **List watches** (`ConditionEngine_WatchList`): an ordered list of conditions for one actor; the winner is the first true one (`ReadListWatch` from any thread, a callback when it changes). Only what can move the result is evaluated after a change: touched rules above the winner, then the winner, and the rules below it only when it turns false. A pending rule above the winner holds it. Value changes are keyed, so pushing `$hunger` for Serana wakes only Serana's watches that read hunger.
 
@@ -74,12 +74,39 @@ ConditionEngine_ReadValueWatch(w, &s);           // any thread, never blocks: s.
 - **Watches** sample at their interval (down to one frame) and on their dependencies; watches of the same value and actor share one sample. With a callback they fire on a step (`minStep`), on threshold crossings (`thresholds`, `hysteresis`) or on any change.
 - **Named values** resolve by name on every read, so redefinitions reach existing handles and watches. `ConditionEngine_RegisterNamedValue`, presets (`"values"`), or Papyrus `RegisterNamedValue`.
 - **Pushed values**: `ConditionEngine_SetValue(actor, name, value, timeoutSeconds)` / `SetGlobalValue`, or Papyrus `SetValue`. Pushing an undeclared name declares it. Pushes are never saved; every load starts clean.
-- **PapyrusCall** reads a number returned by a Papyrus function with the actor as its argument, asynchronously: `PapyrusCall(SeverActionsNative, Native_Survival_GetHunger, interval=2)`, or a method on a form's script with `form="0xD62|SeverActions.esp"`. Reads return the latest result and dispatch at most one call per function and actor.
+- **PapyrusCall** reads a number returned by a Papyrus function with the actor as its argument, asynchronously: `PapyrusCall(SeverActionsNative, Native_Survival_GetHunger, interval=2)`, or a method on a form's script with `form="0xD62|SeverActions.esp"`. Extra arguments after the actor: `args=["hunger", 0.0]` (strings, ints, floats, bools). Reads return the latest result and dispatch at most one call per function, arguments and actor.
+- **StorageUtil** reads a PapyrusUtil StorageUtil number stored on the actor: `StorageUtil(hunger) > 50`, `StorageUtil(mood, kind=int)`, or global storage with `global=true`. It is a PapyrusCall underneath (asynchronous, cached, cost 5) and reads Unavailable without PapyrusUtil.
 - **External value types**: `ConditionEngine_RegisterValueType(schema + "value": {unit, range}, fn, ...)`. The type reads as a value and compares as a condition (`MyMod_Fear > 0.5`). Signal changes with `ConditionEngine_NotifyEvent(CE_DEP_VALUE, actor)`.
 - **Combined values (providers)**: a value with `"provides": "hunger", "priority": 50` is a source for `$hunger`. Per actor, `$hunger` reads its highest-priority available source (ties by name), then its own `expr` if it has one. A pending higher source keeps it pending (no flipping between mods while one loads); nothing available reads its fallback, or unavailable listing the sources tried. The reason buffer says which source answered (`from severactions_hunger`). Each mod adds its own source in its own preset.
 - **Reasons**: `ConditionEngine_ReadValueWatch` / `EvaluateValue` also return why a sample is not OK; external types report theirs through their callback's reason buffer. Named values can require native DLLs (`"requiresDlls": ["SomeNative.dll"]`).
 - **Created actors**: watches on created references (`0xFF...`) stop at the next game load, since that FormID may name a different actor in another save. Value watches then read Unavailable; watch again after loading.
 - **Three-valued enabledWhen**: while an `enabledWhen` condition cannot be decided (an async part has no result yet) the value reads `PENDING` with what it waits for, not "not enabled". `false && pending` is still decided.
+
+## Explaining a result
+
+"Why is this false?" `ConditionEngine_Explain(handle, actor, asText, buf, size)` (and `ConditionEngine_ExplainValue`) evaluates the way the engine does, in the same cheapest-first order with the same short-circuits, and returns each part's outcome:
+
+```
+[F] $hunger > 80 && !Sneaking
+  [F] $hunger > 80
+    [ok] $hunger = 42  (from severactions_hunger)
+      [ok] source, priority 50: $severactions_hunger = 42
+    [ok] 80.0 = 80
+  [-] !Sneaking  [not read: a cheaper part decided the group]
+```
+
+Markers: `[T]` true, `[F]` false, `[P]` pending, `[U]` unavailable, `[-]` skipped, `[ok]` / `[E]` for values. With `asText` 0 it is JSON (`expression`, `state`, `reason`, `value`, `from`, `note`, `role`, `children`) for a UI. Named conditions (`@name`) and named values (`$name`) expand into their definitions, with `enabledWhen` and every provider. Main thread only. Papyrus: `ConditionEngine.Explain(akActor, "expression")` (latent).
+
+## Console
+
+In game, `ce` in the console (it takes over the unused vanilla `TestCode` command; change or turn that off in the ini):
+
+- `ce eval <expression>`: explain a condition or value for the selected actor (click one), else the player
+- `ce evalfor <actor> <expression>`: the same for `player`, `selected`, a form ID (`14`, `0x14|Skyrim.esm`), an editor ID or a loaded actor's name
+- `ce list [filter]`: named values with their current numbers and named conditions with their states
+- `ce stats [on|off|reset]`: watches, tick times, Papyrus calls and the costliest types (`on` times evaluations)
+
+Quote an expression that has commas: `ce eval "Time(20, 6) && $hunger > 50"`.
 
 ## Catalog organisation
 
@@ -93,12 +120,13 @@ ConditionEngine_ReadValueWatch(w, &s);           // any thread, never blocks: s.
 
 ## Papyrus
 
-`ConditionEngine.psc` provides `Evaluate`, `EvaluateNamed`, `RegisterNamed`, `Validate`, `Describe`, `ToJson`, `Normalize`, `Watch` (with an optional poll interval), `Unwatch`, `RefreshWatch` and `SetPollInterval`/`GetPollInterval`. Watches send a mod event when their result changes. Values: `GetValue` (latent), `SetValue`, `SetGlobalValue`, `ClearValue`, `ClearGlobalValue`, `RegisterNamedValue` and `WatchValue` (mod event with the value). Script-created watches, names and values are cleared on every load, so register them again from `OnPlayerLoadGame`.
+`ConditionEngine.psc` provides `Evaluate`, `EvaluateNamed`, `RegisterNamed`, `Validate`, `Describe`, `ToJson`, `Normalize`, `Watch` (with an optional poll interval), `Unwatch`, `RefreshWatch` and `SetPollInterval`/`GetPollInterval`. Watches send a mod event when their result changes. Values: `GetValue` (latent), `SetValue`, `SetGlobalValue`, `ClearValue`, `ClearGlobalValue`, `RegisterNamedValue` and `WatchValue` (mod event with the value). `Explain` (latent) returns the explanation text. Script-created watches, names and values are cleared on every load, so register them again from `OnPlayerLoadGame`.
 
 ## Settings (`Data/SKSE/Plugins/ConditionEngine.ini`)
 
 - `[Watcher] fPollIntervalSeconds = 10` and `fDetectIntervalSeconds = 1`
 - `[Temperature] sGlobal`, `fScale` and `fOffset`: read `Temperature(...)` from a global set by a survival mod
+- `[Console] sReplaceCommand = TestCode`: the vanilla console command `ce` replaces; empty adds no command
 
 ## Notes
 

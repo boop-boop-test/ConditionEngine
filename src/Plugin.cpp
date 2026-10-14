@@ -1,6 +1,7 @@
 /// @file Plugin.cpp
 /// @brief SKSE entry point for the standalone ConditionEngine.dll.
 
+#include "Console.h"
 #include "Papyrus.h"
 
 #include "ConditionEngine/Presets.h"
@@ -40,6 +41,7 @@ namespace {
                 auto& watcher = ConditionEngine::Watcher::Get();
                 watcher.SetPollInterval(settings.pollInterval);
                 watcher.Install(settings.detectInterval);
+                ConditionEngine::Console::Install(settings.consoleCommand);
                 break;
             }
             case SKSE::MessagingInterface::kPreLoadGame:

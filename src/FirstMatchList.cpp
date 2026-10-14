@@ -37,12 +37,8 @@ namespace ConditionEngine {
                 }
                 return;
             }
-            if (type == "papyruscall") {
-                PapyrusCallCondition::Call call;
-                call.script = node.value("script", "");
-                call.function = node.value("function", "");
-                call.form = node.value("form", "");
-                out.insert("call:" + PapyrusCallCondition::Call::MakeKey(call));
+            if (auto call = PapyrusCallCondition::CallFromJson(node)) {
+                out.insert("call:" + call->key);
                 return;
             }
             if (type == "rule") {

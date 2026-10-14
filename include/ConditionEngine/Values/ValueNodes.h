@@ -42,6 +42,9 @@ namespace ConditionEngine {
         std::optional<double> ConstantValue() const override { return folded_; }
         int Cost() const override;
 
+        Op GetOp() const { return op_; }
+        const std::vector<std::shared_ptr<const Value>>& GetArgs() const { return args_; }
+
         static std::optional<Op> ParseOp(std::string_view name);  // "+", "neg", "clamp", ...
         static const char* OpName(Op op);
         // Exact argument count, or nullopt for min / max (two or more)
@@ -68,6 +71,8 @@ namespace ConditionEngine {
         bool ReadsActor() const override;
         int Cost() const override;
         const std::string& GetName() const { return name_; }
+        // The current definition (null when no value has that name)
+        std::shared_ptr<const NamedValueDef> Definition() const { return Bind()->def; }
 
     private:
         // The definition and its sources (highest priority first), one object per revision
@@ -100,6 +105,7 @@ namespace ConditionEngine {
             return c ? std::optional<double>(*c ? 1.0 : 0.0) : std::nullopt;
         }
         int Cost() const override { return condition_ ? condition_->Cost() : 0; }
+        const Condition* GetCondition() const { return condition_.get(); }
 
     private:
         std::shared_ptr<const Condition> condition_;
@@ -115,6 +121,7 @@ namespace ConditionEngine {
         nlohmann::json ToJson() const override;  // the condition's JSON without its comparison
         std::vector<std::string> Validate() const override;
         int Cost() const override { return condition_ ? condition_->Cost() : 0; }
+        const Condition* GetCondition() const { return condition_.get(); }
 
     private:
         const TypeInfo* type_;

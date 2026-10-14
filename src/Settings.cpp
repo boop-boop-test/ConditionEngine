@@ -57,6 +57,8 @@ namespace ConditionEngine {
             if (section == "watcher") {
                 if (key == "fpollintervalseconds") settings.pollInterval = Seconds(value, settings.pollInterval);
                 else if (key == "fdetectintervalseconds") settings.detectInterval = Seconds(value, settings.detectInterval);
+            } else if (section == "console") {
+                if (key == "sreplacecommand") settings.consoleCommand = value;
             } else if (section == "temperature") {
                 try {
                     if (key == "sglobal") settings.temperatureGlobal = value;

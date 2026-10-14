@@ -5,6 +5,7 @@
 #include "ConditionEngine/AllConditions.h"
 #include "ConditionEngine/Availability.h"
 #include "ConditionEngine/EvaluationContext.h"
+#include "ConditionEngine/Explain.h"
 #include "ConditionEngine/Expression.h"
 #include "ConditionEngine/Registry.h"
 #include "ConditionEngine/Stats.h"
@@ -328,6 +329,15 @@ CONDITIONENGINE_API int32_t ConditionEngine_EvaluateFormID(CE_Handle handle, uin
     auto* actor = actorFormId ? RE::TESForm::LookupByID<RE::Actor>(actorFormId) : nullptr;
     if (actorFormId && !actor) return -1;
     return ConditionEngine_Evaluate(handle, actor);
+}
+
+CONDITIONENGINE_API uint32_t ConditionEngine_Explain(CE_Handle handle, void* actor, int32_t asText, char* buf,
+                                                     uint32_t bufSize) {
+    auto condition = Lookup(handle);
+    if (!condition) return WriteString(asText ? "invalid condition handle" : "", buf, bufSize);
+    EvaluationContext context(ActorOrPlayer(actor));
+    const auto explanation = Explain::ExplainCondition(*condition, context);
+    return WriteString(asText ? Explain::ToText(explanation) : explanation.dump(), buf, bufSize);
 }
 
 CONDITIONENGINE_API uint32_t ConditionEngine_GetDependencies(CE_Handle handle) {
@@ -686,6 +696,15 @@ CONDITIONENGINE_API CE_Result ConditionEngine_EvaluateValue(CE_ValueHandle handl
     WriteString(result.Ok() ? (result.from ? "from " + result.FromText() : std::string{}) : result.reason, reasonBuf,
                 reasonBufSize);
     return CE_OK;
+}
+
+CONDITIONENGINE_API uint32_t ConditionEngine_ExplainValue(CE_ValueHandle handle, void* actor, int32_t asText, char* buf,
+                                                          uint32_t bufSize) {
+    auto value = LookupValue(handle);
+    if (!value) return WriteString(asText ? "invalid value handle" : "", buf, bufSize);
+    EvaluationContext context(ActorOrPlayer(actor));
+    const auto explanation = Explain::ExplainValue(*value, context);
+    return WriteString(asText ? Explain::ToText(explanation) : explanation.dump(), buf, bufSize);
 }
 
 CONDITIONENGINE_API uint32_t ConditionEngine_GetValueDependencies(CE_ValueHandle handle) {
