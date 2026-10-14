@@ -3,6 +3,7 @@
 
 #include "ConditionEngine/ConditionEngineAPI.h"
 #include "ConditionEngine/AllConditions.h"
+#include "ConditionEngine/Availability.h"
 #include "ConditionEngine/EvaluationContext.h"
 #include "ConditionEngine/Expression.h"
 #include "ConditionEngine/Registry.h"
@@ -65,7 +66,7 @@ namespace {
     bool Evaluate(const Condition& condition, RE::Actor* actor, void* userData = nullptr) {
         EvaluationContext context(actor);
         context.userData = userData;
-        return condition.Evaluate(context);
+        return condition.EvaluateAvailable(context);
     }
 }
 
@@ -100,6 +101,7 @@ CONDITIONENGINE_API void ConditionEngine_Release(CE_Handle handle) {
 CONDITIONENGINE_API int32_t ConditionEngine_Evaluate(CE_Handle handle, void* actor) {
     auto condition = Lookup(handle);
     if (!condition) return -1;
+    if (!Availability::Get().Check(*condition).Ready()) return 0;
     return Evaluate(*condition, ActorOrPlayer(actor)) ? 1 : 0;
 }
 
@@ -189,6 +191,7 @@ CONDITIONENGINE_API int32_t ConditionEngine_EvaluateNamed(const char* key, void*
     if (!key) return -1;
     auto condition = Registry::Get().FindNamed(key);
     if (!condition) return -1;
+    if (!Availability::Get().Check(*condition).Ready()) return 0;
     return Evaluate(*condition, ActorOrPlayer(actor)) ? 1 : 0;
 }
 
@@ -217,6 +220,7 @@ CONDITIONENGINE_API CE_Result ConditionEngine_RegisterType(const char* name, CE_
 
     TypeInfo info;
     info.name = name;
+    info.source = "plugin";
     info.positional = SplitCsv(positionalCsv);
     info.compareField = compareField ? compareField : "";
     const auto deps = static_cast<EventDependency>(dependencies);
@@ -232,6 +236,99 @@ CONDITIONENGINE_API CE_Result ConditionEngine_RegisterType(const char* name, CE_
     };
     return Registry::Get().RegisterType(std::move(info)) ? CE_OK : CE_ERR_ALREADY_EXISTS;
 }
+
+CONDITIONENGINE_API CE_Result ConditionEngine_RegisterTypeEx(const char* schemaJson, CE_CustomEvalFn fn, void* userData,
+                                                             uint32_t dependencies, char* errorBuf,
+                                                             uint32_t errorBufSize) {
+    if (!schemaJson || !fn) return CE_ERR_INVALID_ARG;
+
+    json schema;
+    try {
+        schema = json::parse(schemaJson);
+    } catch (const std::exception& e) {
+        WriteString(std::string("invalid schema JSON: ") + e.what(), errorBuf, errorBufSize);
+        return CE_ERR_PARSE;
+    }
+    const std::string name = schema.value("name", "");
+    if (name.empty()) {
+        WriteString("schema needs a \"name\"", errorBuf, errorBufSize);
+        return CE_ERR_INVALID_ARG;
+    }
+
+    TypeBuilder builder(name, schema.value("label", name), schema.value("category", "other"));
+    builder.Describe(schema.value("description", "")).Icon(schema.value("icon", "")).Source(schema.value("source", "plugin"));
+    if (schema.contains("aliases") && schema["aliases"].is_array()) {
+        builder.Aliases(schema["aliases"].get<std::vector<std::string>>());
+    }
+    if (schema.contains("positional") && schema["positional"].is_array()) {
+        builder.Positional(schema["positional"].get<std::vector<std::string>>());
+    }
+    if (schema.contains("compareField") && schema["compareField"].is_string()) {
+        builder.Compare(schema["compareField"].get<std::string>());
+    }
+    if (schema.contains("requiresPlugins")) {
+        if (!schema["requiresPlugins"].is_array() || std::any_of(schema["requiresPlugins"].begin(), schema["requiresPlugins"].end(),
+                [](const json& value) { return !value.is_string() || value.get<std::string>().empty(); })) {
+            WriteString("requiresPlugins must be an array of plugin filenames", errorBuf, errorBufSize);
+            return CE_ERR_INVALID_ARG;
+        }
+        builder.RequiresPlugins(schema["requiresPlugins"].get<std::vector<std::string>>());
+    }
+    std::vector<FieldSchema> fields;
+    if (schema.contains("fields") && schema["fields"].is_array()) {
+        for (const auto& f : schema["fields"]) fields.push_back(FieldFromJson(f));
+    }
+    builder.Fields(std::move(fields));
+
+    const auto deps = static_cast<EventDependency>(dependencies);
+    builder.Factory([fn, userData, deps, name](const json& j) -> std::unique_ptr<Condition> {
+        auto params = std::make_shared<const std::string>(j.dump());
+        return std::make_unique<CallbackCondition>(
+            name,
+            [fn, userData, params](const EvaluationContext& context) {
+                return fn(context.GetActor(), params->c_str(), userData) != 0;
+            },
+            deps, j);
+    });
+
+    if (!builder.Register(Registry::Get())) {
+        WriteString("type '" + name + "' is already registered", errorBuf, errorBufSize);
+        return CE_ERR_ALREADY_EXISTS;
+    }
+    WriteString({}, errorBuf, errorBufSize);
+    return CE_OK;
+}
+
+// ── Catalog ──────────────────────────────────────────────────────────────────
+
+CONDITIONENGINE_API uint32_t ConditionEngine_GetCatalog(char* buf, uint32_t bufSize) {
+    return WriteString(Registry::Get().GetCatalog().dump(), buf, bufSize);
+}
+
+CONDITIONENGINE_API uint32_t ConditionEngine_GetJsonSchema(char* buf, uint32_t bufSize) {
+    return WriteString(Registry::Get().GetJsonSchema().dump(), buf, bufSize);
+}
+
+// Availability reads use snapshots and never invoke game APIs or evaluation callbacks.
+CONDITIONENGINE_API uint32_t ConditionEngine_GetAvailability(CE_Handle handle, char* buf, uint32_t bufSize) {
+    const auto condition = Lookup(handle);
+    const auto status = condition ? Availability::Get().Check(*condition) :
+        AvailabilityStatus{AvailabilityState::Unavailable, "Invalid condition handle"};
+    return WriteString(status.ToJson().dump(), buf, bufSize);
+}
+CONDITIONENGINE_API CE_Result ConditionEngine_SetTypeAvailability(const char* type, int32_t state, const char* reason) {
+    if (!type || state < 0 || state > 2) return CE_ERR_INVALID_ARG;
+    return Availability::Get().SetTypeStatus(type, {static_cast<AvailabilityState>(state), reason ? reason : ""}) ?
+        CE_OK : CE_ERR_NOT_FOUND;
+}
+CONDITIONENGINE_API uint32_t ConditionEngine_SubscribeAvailability(CE_AvailabilityChangedFn fn, void* userData) {
+    if (!fn) return 0;
+    return Availability::Get().Subscribe([fn, userData](uint64_t revision) { fn(revision, userData); });
+}
+CONDITIONENGINE_API void ConditionEngine_UnsubscribeAvailability(uint32_t subscription) {
+    Availability::Get().Unsubscribe(subscription);
+}
+CONDITIONENGINE_API uint64_t ConditionEngine_GetAvailabilityRevision(void) { return Availability::Get().Revision(); }
 
 // ── Watches ──────────────────────────────────────────────────────────────────
 

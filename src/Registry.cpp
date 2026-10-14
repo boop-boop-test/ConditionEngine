@@ -1,4 +1,5 @@
 #include "ConditionEngine/Registry.h"
+#include "ConditionEngine/Availability.h"
 
 #include <mutex>
 
@@ -38,9 +39,22 @@ namespace ConditionEngine {
             }
         }
 
+        if (info.label.empty()) info.label = info.name;
+        if (info.source.empty()) info.source = "ConditionEngine";
+        // Comparable types expose their operator as a field so generic editors show it
+        if (!info.compareField.empty() &&
+            std::none_of(info.fields.begin(), info.fields.end(),
+                         [](const FieldSchema& f) { return f.type == FieldType::Comparison; })) {
+            auto at = std::find_if(info.fields.begin(), info.fields.end(),
+                                   [&](const FieldSchema& f) { return f.key == info.compareField; });
+            info.fields.insert(at, Field::Comparison());
+        }
+
         auto owned = std::make_unique<TypeInfo>(std::move(info));
         for (const auto& key : keys) typeLookup_[key] = owned.get();
         types_.push_back(std::move(owned));
+        lock.unlock();
+        Availability::Get().Invalidate();
         return true;
     }
 
@@ -75,6 +89,17 @@ namespace ConditionEngine {
         }
 
         if (!factory) {
+            UnknownTypeHandler fallback;
+            {
+                std::shared_lock lock(mutex_);
+                fallback = unknownTypeHandler_;
+            }
+            if (fallback) {
+                if (auto proxied = fallback(json)) {
+                    proxied->forcePolled = json.value("forcePolled", false);
+                    return proxied;
+                }
+            }
             SKSE::log::warn("Condition::FromJson - Unknown condition type '{}', condition will be dropped", type);
             return nullptr;
         }
@@ -93,6 +118,115 @@ namespace ConditionEngine {
         return result;
     }
 
+    void Registry::SetUnknownTypeHandler(UnknownTypeHandler handler) {
+        std::unique_lock lock(mutex_);
+        unknownTypeHandler_ = std::move(handler);
+    }
+
+    // -- Categories and catalog ---------------------------------------------
+
+    void Registry::RegisterCategory(CategoryInfo category) {
+        std::unique_lock lock(mutex_);
+        for (auto& existing : categories_) {
+            if (existing.id == category.id) {
+                existing = std::move(category);
+                return;
+            }
+        }
+        categories_.push_back(std::move(category));
+    }
+
+    std::vector<CategoryInfo> Registry::GetCategories() const {
+        std::shared_lock lock(mutex_);
+        auto result = categories_;
+        std::stable_sort(result.begin(), result.end(),
+                         [](const CategoryInfo& a, const CategoryInfo& b) { return a.order < b.order; });
+        return result;
+    }
+
+    namespace {
+        // Dependencies of a default-configured instance (factories never touch game state)
+        EventDependency DefaultDependencies(const TypeInfo& info) {
+            nlohmann::json defaults{{"type", info.name}};
+            for (const auto& f : info.fields) {
+                if (!f.defaultValue.is_null()) defaults[f.key] = f.defaultValue;
+            }
+            try {
+                if (auto instance = info.factory ? info.factory(defaults) : nullptr) {
+                    return instance->GetEventDependencies();
+                }
+            } catch (...) {
+            }
+            return EventDependency::None;
+        }
+    }
+
+    nlohmann::json Registry::GetCatalog() const {
+        nlohmann::json categories = nlohmann::json::array();
+        for (const auto& c : GetCategories()) {
+            categories.push_back({{"id", c.id}, {"label", c.label}, {"order", c.order}});
+        }
+
+        nlohmann::json types = nlohmann::json::array();
+        for (const auto* info : GetTypes()) {
+            nlohmann::json fields = nlohmann::json::array();
+            for (const auto& f : info->fields) fields.push_back(FieldToJson(f));
+
+            nlohmann::json type{
+                {"name", info->name},
+                {"label", info->label},
+                {"category", info->category},
+                {"description", info->description},
+                {"aliases", info->aliases},
+                {"fields", std::move(fields)},
+                {"positional", info->positional},
+                {"dependencies", DependencyNames(DefaultDependencies(*info))},
+                {"source", info->source},
+            };
+            type["requiresPlugins"] = info->requiresPlugins;
+            type["availability"] = Availability::Get().CheckType(*info).ToJson();
+            if (!info->icon.empty()) type["icon"] = info->icon;
+            if (!info->compareField.empty()) type["compareField"] = info->compareField;
+            if (info->hidden) type["hidden"] = true;
+            types.push_back(std::move(type));
+        }
+
+        return {{"version", 1}, {"availabilityRevision", Availability::Get().Revision()}, {"categories", std::move(categories)}, {"types", std::move(types)}};
+    }
+
+    nlohmann::json Registry::GetJsonSchema() const {
+        nlohmann::json variants = nlohmann::json::array();
+        for (const auto* info : GetTypes()) {
+            nlohmann::json names = nlohmann::json::array({info->name});
+            for (const auto& alias : info->aliases) names.push_back(alias);
+
+            nlohmann::json properties{{"type", {{"enum", names}}}};
+            nlohmann::json required = nlohmann::json::array({"type"});
+            for (const auto& f : info->fields) {
+                properties[f.key] = FieldToJsonSchema(f);
+                if (f.required) required.push_back(f.key);
+            }
+            properties["forcePolled"] = {{"type", "boolean"}, {"description", "Re-evaluate on every poll tick"}};
+
+            nlohmann::json variant{{"title", info->label},
+                                   {"type", "object"},
+                                   {"properties", std::move(properties)},
+                                   {"required", std::move(required)}};
+            if (!info->description.empty()) variant["description"] = info->description;
+            variants.push_back(std::move(variant));
+        }
+
+        return {
+            {"$schema", "http://json-schema.org/draft-07/schema#"},
+            {"$id", "https://dresscode.mod/schemas/condition.schema.json"},
+            {"title", "Condition"},
+            {"description", "A ConditionEngine condition. Generated from the type registry - do not edit by hand."},
+            {"type", "object"},
+            {"required", {"type"}},
+            {"oneOf", std::move(variants)},
+        };
+    }
+
     // ── Named conditions ─────────────────────────────────────────────────────
 
     void Registry::RegisterNamed(const std::string& id, std::shared_ptr<const Condition> condition,
@@ -106,16 +240,24 @@ namespace ConditionEngine {
         }
         entry.condition = std::move(condition);
         entry.info = NamedConditionInfo{id, source, expression};
+        lock.unlock();
+        Availability::Get().Invalidate();
     }
 
     bool Registry::UnregisterNamed(const std::string& id) {
         std::unique_lock lock(mutex_);
-        return named_.erase(id) > 0;
+        const bool removed = named_.erase(id) > 0;
+        lock.unlock();
+        if (removed) Availability::Get().Invalidate();
+        return removed;
     }
 
     std::size_t Registry::UnregisterSource(const std::string& source) {
         std::unique_lock lock(mutex_);
-        return std::erase_if(named_, [&](const auto& kv) { return kv.second.info.source == source; });
+        const auto removed = std::erase_if(named_, [&](const auto& kv) { return kv.second.info.source == source; });
+        lock.unlock();
+        if (removed) Availability::Get().Invalidate();
+        return removed;
     }
 
     std::vector<NamedConditionInfo> Registry::ListNamed() const {
@@ -147,6 +289,8 @@ namespace ConditionEngine {
         if (!resolver) return;
         std::unique_lock lock(mutex_);
         resolvers_.push_back(std::move(resolver));
+        lock.unlock();
+        Availability::Get().Invalidate();
     }
 
     // ── Providers ────────────────────────────────────────────────────────────

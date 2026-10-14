@@ -122,7 +122,7 @@ namespace ConditionEngine {
     }
 
     nlohmann::json LevelCondition::ToJson() const {
-        return {{"type", "Level"}, {"level", level_}, {"operator", ComparisonOpToString(op_)}};
+        return {{"type", "Level"}, {"level", level_}, {"operator", ComparisonOpToName(op_)}};
     }
 
     std::unique_ptr<Condition> LevelCondition::Clone() const {
@@ -240,17 +240,6 @@ namespace ConditionEngine {
             };
         }
 
-        void Add(Registry& r, std::string name, std::vector<std::string> aliases, ConditionFactory factory,
-                 std::vector<std::string> positional, std::string compareField, std::string description) {
-            TypeInfo info;
-            info.name = std::move(name);
-            info.aliases = std::move(aliases);
-            info.factory = std::move(factory);
-            info.positional = std::move(positional);
-            info.compareField = std::move(compareField);
-            info.description = std::move(description);
-            r.RegisterType(std::move(info));
-        }
     }
 
     std::uint32_t ComputeActorStateFlags(RE::Actor* actor) {
@@ -266,58 +255,83 @@ namespace ConditionEngine {
     }
 
     void RegisterActorConditionTypes(Registry& r) {
+        using namespace Field;
         const auto state = EventDependency::ActorState;
-        Add(r, "Sneaking", {"IsSneaking"}, Flag("Sneaking", "is sneaking", IsSneaking, state), {"expectedState"}, {},
-            "Actor is sneaking");
-        Add(r, "Sitting", {"IsSitting"}, Flag("Sitting", "is sitting", IsSitting, state), {"expectedState"}, {},
-            "Actor is sitting in furniture");
-        Add(r, "InDialogue", {"IsInDialogue", "Talking"}, Flag("InDialogue", "is in dialogue", IsInDialogue, state),
-            {"expectedState"}, {}, "Actor is in a dialogue conversation");
-        Add(r, "Bleedout", {"IsBleedingOut"}, Flag("Bleedout", "is bleeding out", IsBleedout, state),
-            {"expectedState"}, {}, "Actor is in bleedout");
-        Add(r, "WeaponDrawn", {"IsWeaponDrawn"}, Flag("WeaponDrawn", "has weapon drawn", IsWeaponDrawn, state),
-            {"expectedState"}, {}, "Actor has weapons/spells drawn");
-        Add(r, "IsFollower", {"Follower", "IsPlayerTeammate"},
-            Flag("IsFollower", "is a follower", IsFollower, state), {"expectedState"}, {},
-            "Actor is the player or a player teammate");
-        Add(r, "IsPlayer", {}, Flag("IsPlayer", "is the player", IsPlayer, EventDependency::None), {"expectedState"},
-            {}, "Actor is the player");
 
-        Add(r, "IsActor", {"ActorIs"},
-            FormList("IsActor", "actor", "Actor is", IsActorForm, EventDependency::None), {"actor", "matchAny"}, {},
-            "Actor is a specific reference or base NPC");
-        Add(r, "HasKeyword", {"ActorHasKeyword"},
-            FormList("HasKeyword", "keywords", "Actor has keyword", HasKeywordForm, EventDependency::None),
-            {"keywords", "matchAny"}, {}, "Actor (race or base) has keyword");
-        Add(r, "HasMagicEffect", {},
-            FormList("HasMagicEffect", "effects", "Actor has effect", HasMagicEffectForm, EventDependency::MagicEffect),
-            {"effects", "matchAny"}, {}, "Active magic effect (or an effect with the keyword)");
-        Add(r, "HasPerk", {},
-            FormList("HasPerk", "perks", "Actor has perk", HasPerkForm, EventDependency::MagicEffect),
-            {"perks", "matchAny"}, {}, "Actor has perk");
-        Add(r, "HasSpell", {},
-            FormList("HasSpell", "spells", "Actor has spell", HasSpellForm, EventDependency::MagicEffect),
-            {"spells", "matchAny"}, {}, "Actor knows spell/ability");
-        Add(r, "WornHasKeyword", {},
-            FormList("WornHasKeyword", "keywords", "Worn armor has keyword", WornHasKeywordForm,
-                     EventDependency::Equipment),
-            {"keywords", "matchAny"}, {}, "Any worn armor has the keyword (e.g. ArmorHeavy, ClothingRich)");
+        auto flag = [&r](const char* name, const char* label, const char* icon, const char* description,
+                         std::vector<std::string> aliases, ActorFlagCondition::Predicate predicate,
+                         EventDependency deps) {
+            TypeBuilder(name, label, "actorState")
+                .Aliases(std::move(aliases))
+                .Icon(icon)
+                .Describe(std::string("Actor ") + description)
+                .Fields({Bool("expectedState", "Expected", true)})
+                .Factory(Flag(name, description, predicate, deps))
+                .Register(r);
+        };
+        flag("Sneaking", "Sneaking", "🥷", "is sneaking", {"IsSneaking"}, IsSneaking, state);
+        flag("Sitting", "Sitting", "🪑", "is sitting in furniture", {"IsSitting"}, IsSitting, state);
+        flag("InDialogue", "In Dialogue", "💬", "is in a dialogue conversation", {"IsInDialogue", "Talking"},
+             IsInDialogue, state);
+        flag("Bleedout", "Bleeding Out", "🩸", "is in bleedout", {"IsBleedingOut"}, IsBleedout, state);
+        flag("WeaponDrawn", "Weapon Drawn", "⚔️", "has weapons or spells drawn", {"IsWeaponDrawn"}, IsWeaponDrawn, state);
+        flag("IsFollower", "Is Follower", "🤝", "is the player or a player teammate", {"Follower", "IsPlayerTeammate"},
+             IsFollower, state);
+        flag("IsPlayer", "Is Player", "🧍", "is the player", {}, IsPlayer, EventDependency::None);
 
-        Add(r, "Level", {"ActorLevel"},
-            [](const json& j) {
+        auto forms = [&r](const char* name, const char* label, const char* icon, const char* category,
+                          const char* description, std::vector<std::string> aliases, const char* field,
+                          const char* fieldLabel, std::vector<std::string> formTypes,
+                          ActorFormCondition::Predicate predicate, EventDependency deps) {
+            TypeBuilder(name, label, category)
+                .Aliases(std::move(aliases))
+                .Icon(icon)
+                .Describe(description)
+                .Fields({FormList(field, fieldLabel, std::move(formTypes)).Required(),
+                         Bool("matchAny", "Match ANY (unchecked = ALL)", true)})
+                .Factory(FormList(name, field, description, predicate, deps))
+                .Register(r);
+        };
+        forms("IsActor", "Specific Actor", "👤", "actor", "Actor is a specific reference or base NPC", {"ActorIs"},
+              "actor", "Actors", {"Actor", "NPC"}, IsActorForm, EventDependency::None);
+        forms("HasKeyword", "Actor Keyword", "🏷️", "actor", "Actor (race or base) has keyword", {"ActorHasKeyword"},
+              "keywords", "Keywords", {"Keyword"}, HasKeywordForm, EventDependency::None);
+        forms("HasMagicEffect", "Magic Effect", "✨", "actor", "Has an active magic effect (or an effect with the keyword)",
+              {}, "effects", "Effects or Keywords", {"MagicEffect", "Keyword"}, HasMagicEffectForm,
+              EventDependency::MagicEffect);
+        forms("HasPerk", "Perk", "⭐", "actor", "Actor has perk", {}, "perks", "Perks", {"Perk"}, HasPerkForm,
+              EventDependency::MagicEffect);
+        forms("HasSpell", "Spell or Ability", "📘", "actor", "Actor knows the spell or has the ability", {}, "spells",
+              "Spells", {"Spell"}, HasSpellForm, EventDependency::MagicEffect);
+        forms("WornHasKeyword", "Worn Armor Keyword", "👕", "gear",
+              "Any worn armor has the keyword (e.g. ArmorHeavy, ClothingRich)", {}, "keywords", "Keywords", {"Keyword"},
+              WornHasKeywordForm, EventDependency::Equipment);
+
+        TypeBuilder("Level", "Actor Level", "actor")
+            .Aliases({"ActorLevel"})
+            .Icon("📈")
+            .Describe("Actor level comparison (Level(20) means >= 20)")
+            .Fields({Comparison("operator", "Operator", "GreaterOrEqual"), Int("level", "Level", 1).Range(1, 65535)})
+            .Positional({"level"})
+            .Compare("level")
+            .Factory([](const json& j) {
                 const bool hasOp = j.contains("operator") || j.contains("operation");
                 return std::make_unique<LevelCondition>(j.value("level", 1),
                                                         hasOp ? ParseComparisonOperator(j) : ComparisonOperator::GreaterEqual);
-            },
-            {"level"}, "level", "Actor level comparison (Level(20) means >= 20)");
+            })
+            .Register(r);
 
-        Add(r, "Sex", {"Gender"},
-            [](const json& j) -> std::unique_ptr<Condition> {
+        TypeBuilder("Sex", "Sex", "actor")
+            .Aliases({"Gender"})
+            .Icon("⚧")
+            .Describe("Actor sex")
+            .Fields({Enum("sex", "Sex", Options({"Female", "Male"}), "Female")})
+            .Factory([](const json& j) -> std::unique_ptr<Condition> {
                 if (j.contains("sex") && j["sex"].is_number()) return std::make_unique<SexCondition>(j["sex"].get<int>() == 1);
                 std::string sex = j.contains("sex") && j["sex"].is_string() ? j["sex"].get<std::string>() : "Female";
                 return std::make_unique<SexCondition>(_stricmp(sex.c_str(), "female") == 0 || sex == "1");
-            },
-            {"sex"}, {}, "Actor sex (Male/Female)");
+            })
+            .Register(r);
     }
 
 } // namespace ConditionEngine

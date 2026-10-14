@@ -16,18 +16,6 @@ namespace ConditionEngine {
         return "==";
     }
 
-    static std::string ComparisonOpToName(ComparisonOperator op) {
-        switch (op) {
-            case ComparisonOperator::Equal:        return "Equal";
-            case ComparisonOperator::NotEqual:     return "NotEqual";
-            case ComparisonOperator::GreaterThan:  return "Greater";
-            case ComparisonOperator::LessThan:     return "Less";
-            case ComparisonOperator::GreaterEqual: return "GreaterOrEqual";
-            case ComparisonOperator::LessEqual:    return "LessOrEqual";
-        }
-        return "Equal";
-    }
-
     static bool CompareFloatLocal(float lhs, float rhs, ComparisonOperator op) {
         switch (op) {
             case ComparisonOperator::Equal:        return lhs == rhs;

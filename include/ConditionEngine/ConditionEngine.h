@@ -7,3 +7,5 @@
 #include "ConditionEngine/EvaluationContext.h"
 #include "ConditionEngine/Forms.h"
 #include "ConditionEngine/Registry.h"
+
+#include "ConditionEngine/Availability.h"

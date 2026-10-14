@@ -14,7 +14,8 @@ Scriptname ConditionEngine Hidden
 ; ==========================================================================
 
 ;
-; Evaluation
+; Evaluation - latent: the script waits one frame while the main thread evaluates
+; (game state is only safe to read there). Invalid expressions return False.
 ;
 Bool     Function Evaluate(Actor akActor, String asExpression) Global Native
 Bool     Function EvaluateNamed(Actor akActor, String asName) Global Native
@@ -34,6 +35,7 @@ String   Function Validate(String asExpression) Global Native   ; "" when valid,
 String   Function Describe(String asExpression) Global Native   ; human-readable summary
 String   Function ToJson(String asExpression) Global Native     ; JSON condition tree
 String   Function Normalize(String asExpression) Global Native  ; canonical expression text
+String   Function GetCatalog() Global Native                    ; JSON: every condition type and its fields
 
 ;
 ; Watches - sends a mod event whenever the result changes:

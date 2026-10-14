@@ -45,25 +45,73 @@ namespace ConditionEngine::Papyrus {
             return actor ? actor : RE::PlayerCharacter::GetSingleton();
         }
 
-        bool Evaluate(StaticFn*, RE::Actor* actor, RE::BSFixedString expression) {
+        using Latent = RE::BSScript::LatentStatus;
+        using InternalVM = RE::BSScript::Internal::VirtualMachine;
+
+        // Latent native returning R to the script. Equivalent to
+        // IVirtualMachine::RegisterLatentFunction<R>, whose CommonLib implementation
+        // (NativeLatentFunction) does not compile: it calls GetRawType<R>() instead of
+        // GetRawType<R>{}().
+        template <class R, class... Args>
+        class LatentFunction final
+            : public RE::BSScript::NativeFunction<true, Latent(InternalVM*, RE::VMStackID, StaticFn*, Args...),
+                                                  std::underlying_type_t<Latent>, StaticFn*, Args...> {
+            using Base = RE::BSScript::NativeFunction<true, Latent(InternalVM*, RE::VMStackID, StaticFn*, Args...),
+                                                      std::underlying_type_t<Latent>, StaticFn*, Args...>;
+
+        public:
+            LatentFunction(std::string_view name, std::string_view className,
+                           Latent (*callback)(InternalVM*, RE::VMStackID, StaticFn*, Args...))
+                : Base(name, className, callback) {
+                this->_retType = RE::BSScript::GetRawType<R>{}();
+                this->_isLatent = true;
+            }
+        };
+
+        template <class R, class... Args>
+        void RegisterLatent(VM* vm, std::string_view name, Latent (*callback)(InternalVM*, RE::VMStackID, StaticFn*, Args...)) {
+            vm->BindNativeMethod(new LatentFunction<R, Args...>(name, kScriptName, callback));
+        }
+
+        // Evaluation reads game state (and Game(...) runs the engine's condition
+        // evaluator), so it must happen on the main thread. Latent natives let the
+        // script wait one frame for the result instead of evaluating on a VM thread.
+        Latent EvaluateOnMainThread(InternalVM* vm, RE::VMStackID stackId, std::shared_ptr<const Condition> condition,
+                                    RE::Actor* actor) {
+            auto* tasks = SKSE::GetTaskInterface();
+            if (!tasks) return Latent::kFailed;
+            const RE::ActorHandle handle = actor ? actor->GetHandle() : RE::ActorHandle{};
+            const bool usePlayer = actor == nullptr;
+            tasks->AddTask([vm, stackId, condition = std::move(condition), handle, usePlayer]() {
+                bool result = false;
+                RE::Actor* target = usePlayer ? RE::PlayerCharacter::GetSingleton() : handle.get().get();
+                if (condition && target) {
+                    EvaluationContext context(target);
+                    result = condition->EvaluateAvailable(context);
+                }
+                vm->ReturnLatentResult<bool>(stackId, result);
+            });
+            return Latent::kStarted;
+        }
+
+        Latent Evaluate(InternalVM* vm, RE::VMStackID stackId, StaticFn*, RE::Actor* actor,
+                        RE::BSFixedString expression) {
             std::string error;
             auto condition = CompileCached(expression.c_str(), &error);
             if (!condition) {
                 SKSE::log::warn("ConditionEngine.Evaluate: {} in \"{}\"", error, expression.c_str());
-                return false;
             }
-            EvaluationContext context(ActorOrPlayer(actor));
-            return condition->Evaluate(context);
+            // Invalid expressions still complete (as false) so the script never hangs
+            return EvaluateOnMainThread(vm, stackId, std::move(condition), actor);
         }
 
-        bool EvaluateNamed(StaticFn*, RE::Actor* actor, RE::BSFixedString name) {
+        Latent EvaluateNamed(InternalVM* vm, RE::VMStackID stackId, StaticFn*, RE::Actor* actor,
+                             RE::BSFixedString name) {
             auto condition = Registry::Get().FindNamed(name.c_str());
             if (!condition) {
                 SKSE::log::warn("ConditionEngine.EvaluateNamed: unknown condition '{}'", name.c_str());
-                return false;
             }
-            EvaluationContext context(ActorOrPlayer(actor));
-            return condition->Evaluate(context);
+            return EvaluateOnMainThread(vm, stackId, std::move(condition), actor);
         }
 
         bool RegisterNamed(StaticFn*, RE::BSFixedString name, RE::BSFixedString expression) {
@@ -171,9 +219,13 @@ namespace ConditionEngine::Papyrus {
             return static_cast<float>(Watcher::Get().GetPollInterval().count()) / 1000.0f;
         }
 
+        RE::BSFixedString GetCatalog(StaticFn*) {
+            return Registry::Get().GetCatalog().dump();
+        }
+
         bool RegisterFunctions(VM* vm) {
-            vm->RegisterFunction("Evaluate", kScriptName, Evaluate);
-            vm->RegisterFunction("EvaluateNamed", kScriptName, EvaluateNamed);
+            RegisterLatent<bool>(vm, "Evaluate", Evaluate);
+            RegisterLatent<bool>(vm, "EvaluateNamed", EvaluateNamed);
             vm->RegisterFunction("RegisterNamed", kScriptName, RegisterNamed);
             vm->RegisterFunction("UnregisterNamed", kScriptName, UnregisterNamed);
             vm->RegisterFunction("Validate", kScriptName, Validate, true);
@@ -183,6 +235,7 @@ namespace ConditionEngine::Papyrus {
             vm->RegisterFunction("Watch", kScriptName, Watch);
             vm->RegisterFunction("Unwatch", kScriptName, Unwatch);
             vm->RegisterFunction("RefreshWatch", kScriptName, RefreshWatch);
+            vm->RegisterFunction("GetCatalog", kScriptName, GetCatalog, true);
             vm->RegisterFunction("SetPollInterval", kScriptName, SetPollInterval);
             vm->RegisterFunction("GetPollInterval", kScriptName, GetPollInterval);
             return true;

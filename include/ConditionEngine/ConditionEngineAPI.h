@@ -24,11 +24,13 @@
 ///   1 - Compile/Evaluate/Describe, named conditions, custom types, watches, events
 ///   2 - WatchEx (per-watch poll interval + extra triggers), Refresh, Set/GetPollInterval,
 ///       CE_DEP_INVENTORY / CE_DEP_MAGIC_EFFECT / CE_DEP_ACTOR_STATE
+///   4 - Availability snapshots, required plugins, type status publication and change subscriptions
+///   3 - GetCatalog / GetJsonSchema (self-describing types), RegisterTypeEx (type + schema)
 
 #include <stdint.h>
 #include "ConditionEngine/Export.h"
 
-#define CONDITIONENGINE_API_VERSION 2
+#define CONDITIONENGINE_API_VERSION 4
 
 #ifdef __cplusplus
 extern "C" {
@@ -69,7 +71,8 @@ enum {
     CE_DEP_HOST = 1u << 18,         ///< Host-signalled state (fire via NotifyEvent)
     CE_DEP_INVENTORY = 1u << 19,    ///< v2: item counts
     CE_DEP_MAGIC_EFFECT = 1u << 20, ///< v2: active effects, spells, perks
-    CE_DEP_ACTOR_STATE = 1u << 21   ///< v2: sneaking, sitting, dialogue, bleedout, weapon drawn, follower
+    CE_DEP_ACTOR_STATE = 1u << 21,  ///< v2: sneaking, sitting, dialogue, bleedout, weapon drawn, follower
+    CE_DEP_AVAILABILITY = 1u << 22
 };
 
 #define CE_POLL_DEFAULT 0u           ///< Use the global poll interval
@@ -154,6 +157,45 @@ CONDITIONENGINE_API CE_Result ConditionEngine_AddNamedResolver(CE_NamedLookupFn 
 CONDITIONENGINE_API CE_Result ConditionEngine_RegisterType(const char* name, CE_CustomEvalFn fn, void* userData,
                                                            uint32_t dependencies, const char* positionalCsv,
                                                            const char* compareField);
+
+/// v3: Registers a custom type together with its schema, so editors (DressCode's UI,
+/// other mods) can offer it without knowing it. `schemaJson`:
+///   {"name": "MyMod_IsCursed", "label": "Is Cursed", "category": "actor",
+///    "description": "...", "aliases": [], "compareField": "level",
+///    "fields": [{"key": "level", "label": "Curse Level", "type": "int", "default": 1}],
+///    "positional": ["level"]}
+/// Field types: int, float, string, bool, enum, enumList, form, formList, stringList,
+/// intList, comparison, namedCondition, custom (see ConditionEngine/Schema.h).
+CONDITIONENGINE_API CE_Result ConditionEngine_RegisterTypeEx(const char* schemaJson, CE_CustomEvalFn fn, void* userData,
+                                                             uint32_t dependencies, char* errorBuf,
+                                                             uint32_t errorBufSize);
+
+// ── Catalog ──────────────────────────────────────────────────────────────────
+
+/// v3: Every registered type with its fields, labels and categories, as JSON:
+///   {"version": 1, "categories": [{"id","label","order"}],
+///    "types": [{"name","label","category","icon","description","aliases","fields",
+///               "positional","compareField","dependencies","hidden","source"}]}
+CONDITIONENGINE_API uint32_t ConditionEngine_GetCatalog(char* buf, uint32_t bufSize);
+/// v3: JSON Schema (draft-07) validating condition JSON, generated from the catalog.
+CONDITIONENGINE_API uint32_t ConditionEngine_GetJsonSchema(char* buf, uint32_t bufSize);
+
+// ── Availability (v4) ─────────────────────────────────────────────────────────
+// RegisterTypeEx accepts requiresPlugins: ["SomeMod.esp"]. Catalog entries include
+// availability: {state: "available" | "pending" | "unavailable", available: bool, reason: string}.
+// Form fields with portable 0x...|Plugin.esp keys also require that plugin at expression level.
+// Types always remain registered so saved expressions still compile without their dependencies.
+// Evaluate/EvaluateNamed and watches return false for an unavailable whole expression (even under NOT/OR).
+// C++ consumers use Condition::EvaluateAvailable at rule boundaries for the same behavior.
+// SetTypeAvailability publishes host readiness; 0=pending, 1=available, 2=unavailable.
+// Reads and publication are thread-safe. Subscribers run on the publishing thread, outside locks;
+// marshal game/UI work to the main thread. Unsubscribe before unloading and synchronize any in-flight callback.
+typedef void (*CE_AvailabilityChangedFn)(uint64_t revision, void* userData);
+CONDITIONENGINE_API uint32_t ConditionEngine_GetAvailability(CE_Handle handle, char* buf, uint32_t bufSize);
+CONDITIONENGINE_API CE_Result ConditionEngine_SetTypeAvailability(const char* type, int32_t state, const char* reason);
+CONDITIONENGINE_API uint32_t ConditionEngine_SubscribeAvailability(CE_AvailabilityChangedFn fn, void* userData);
+CONDITIONENGINE_API void ConditionEngine_UnsubscribeAvailability(uint32_t subscription);
+CONDITIONENGINE_API uint64_t ConditionEngine_GetAvailabilityRevision(void);
 
 // ── Watches ──────────────────────────────────────────────────────────────────
 

@@ -9,9 +9,12 @@
 //             (presets, C API, Papyrus) and consults host resolvers (e.g. DressCode rules).
 // Providers:  hooks for game state the engine cannot know by itself (love scenes,
 //             survival-mod temperature).
+// Catalog:    every type's schema (fields, labels, category) as JSON, so UIs and
+//             other mods can build editors without hard-coding condition types.
 
 #include "ConditionEngine/Condition.h"
 #include "ConditionEngine/Common.h"
+#include "ConditionEngine/Schema.h"
 
 #include <shared_mutex>
 
@@ -33,6 +36,15 @@ namespace ConditionEngine {
         // Fields ToJson writes for UIs that the factory ignores; omitted from expression text.
         std::vector<std::string> derived;
         std::string description;
+
+        // -- Schema (see Schema.h) ------------------------------------------
+        std::string label;                   // Display name ("Time of Day"); defaults to name
+        std::string category = "other";      // CategoryInfo id
+        std::string icon;                    // Optional short glyph for UIs
+        std::vector<FieldSchema> fields;     // Editable fields, in display order
+        std::vector<std::string> requiresPlugins; // All must be loaded; types remain registered when unavailable.
+        bool hidden = false;                 // Legacy/internal: accepted but not offered in pickers
+        std::string source;                  // Who registered it ("ConditionEngine", plugin name)
     };
 
     struct NamedConditionInfo {
@@ -60,6 +72,23 @@ namespace ConditionEngine {
         const TypeInfo* FindType(const std::string& nameOrAlias) const;
         std::vector<const TypeInfo*> GetTypes() const;
         std::unique_ptr<Condition> Create(const nlohmann::json& json) const;
+
+        // Called by Create for types nobody registered (e.g. to proxy types that live
+        // in another module). Returning null drops the condition as before.
+        using UnknownTypeHandler = std::function<std::unique_ptr<Condition>(const nlohmann::json&)>;
+        void SetUnknownTypeHandler(UnknownTypeHandler handler);
+
+        // -- Categories and catalog -----------------------------------------
+        void RegisterCategory(CategoryInfo category);
+        std::vector<CategoryInfo> GetCategories() const;
+
+        // {"version", "categories": [...], "types": [{name, label, category, icon,
+        //   description, aliases, fields, positional, compareField, dependencies,
+        //   hidden, source}]}
+        nlohmann::json GetCatalog() const;
+
+        // JSON Schema (draft-07) for condition JSON, generated from the catalog
+        nlohmann::json GetJsonSchema() const;
 
         // ── Named conditions ─────────────────────────────────────────────────
         // Replaces any existing engine-owned entry with the same id.
@@ -94,8 +123,52 @@ namespace ConditionEngine {
         std::unordered_map<std::string, const TypeInfo*> typeLookup_;
         std::unordered_map<std::string, NamedEntry> named_;
         std::vector<NamedResolver> resolvers_;
+        std::vector<CategoryInfo> categories_;
+        UnknownTypeHandler unknownTypeHandler_;
         ActorFlagProvider loveSceneProvider_;
         ActorFloatProvider temperatureProvider_;
+    };
+
+    // Fluent TypeInfo construction:
+    //   TypeBuilder("Level", "Actor Level", "actor")
+    //       .Fields({Field::Int("level", "Level", 1)})
+    //       .Positional({"level"}).Compare("level")
+    //       .Factory([](const json& j) { ... })
+    //       .Register(registry);
+    class TypeBuilder {
+    public:
+        TypeBuilder(std::string name, std::string label, std::string category) {
+            info_.name = std::move(name);
+            info_.label = std::move(label);
+            info_.category = std::move(category);
+        }
+
+        TypeBuilder& Aliases(std::vector<std::string> v) { info_.aliases = std::move(v); return *this; }
+        TypeBuilder& Icon(std::string v) { info_.icon = std::move(v); return *this; }
+        TypeBuilder& Describe(std::string v) { info_.description = std::move(v); return *this; }
+        TypeBuilder& Fields(std::vector<FieldSchema> v) { info_.fields = std::move(v); return *this; }
+        TypeBuilder& Positional(std::vector<std::string> v) { info_.positional = std::move(v); return *this; }
+        TypeBuilder& Compare(std::string field) { info_.compareField = std::move(field); return *this; }
+        TypeBuilder& Derived(std::vector<std::string> v) { info_.derived = std::move(v); return *this; }
+        TypeBuilder& RequiresPlugins(std::vector<std::string> v) { info_.requiresPlugins = std::move(v); return *this; }
+        TypeBuilder& Hidden(bool v = true) { info_.hidden = v; return *this; }
+        TypeBuilder& Source(std::string v) { info_.source = std::move(v); return *this; }
+        TypeBuilder& Factory(ConditionFactory v) { info_.factory = std::move(v); return *this; }
+
+        // Positional arguments default to the field keys in order (comparison fields excluded)
+        bool Register(Registry& registry) {
+            if (info_.positional.empty()) {
+                for (const auto& f : info_.fields) {
+                    if (f.type != FieldType::Comparison && f.type != FieldType::Conditions && f.key != info_.compareField) {
+                        info_.positional.push_back(f.key);
+                    }
+                }
+            }
+            return registry.RegisterType(std::move(info_));
+        }
+
+    private:
+        TypeInfo info_;
     };
 
     // Registers every built-in condition type. Called once by Registry::Get().

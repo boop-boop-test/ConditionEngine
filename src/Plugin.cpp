@@ -4,6 +4,7 @@
 #include "Papyrus.h"
 
 #include "ConditionEngine/Presets.h"
+#include "ConditionEngine/Availability.h"
 #include "ConditionEngine/Registry.h"
 #include "ConditionEngine/Settings.h"
 #include "ConditionEngine/Watcher.h"
@@ -27,6 +28,7 @@ namespace {
     void OnMessage(SKSE::MessagingInterface::Message* message) {
         switch (message->type) {
             case SKSE::MessagingInterface::kDataLoaded: {
+                ConditionEngine::Availability::Get().RefreshLoadedPlugins();
                 const auto settings = ConditionEngine::LoadSettings(ConditionEngine::GetDefaultSettingsPath());
                 ConditionEngine::ApplyTemperatureSettings(settings);
 
@@ -40,7 +42,11 @@ namespace {
             }
             case SKSE::MessagingInterface::kPreLoadGame:
             case SKSE::MessagingInterface::kNewGame:
+                ConditionEngine::Availability::Get().RefreshLoadedPlugins();
                 ConditionEngine::Papyrus::ClearScriptState();
+                break;
+            case SKSE::MessagingInterface::kPostLoadGame:
+                ConditionEngine::Availability::Get().RefreshLoadedPlugins();
                 break;
             default:
                 break;

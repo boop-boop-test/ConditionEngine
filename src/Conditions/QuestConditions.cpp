@@ -36,7 +36,7 @@ namespace ConditionEngine {
         json["type"] = "QuestStage";
         json["questId"] = questName;  // FromJson reads "questId" first, "questName" as legacy fallback
         json["stage"] = targetStage;
-        json["operation"] = static_cast<int>(operation);
+        json["operator"] = ComparisonOpToName(operation);
         return json;
     }
 

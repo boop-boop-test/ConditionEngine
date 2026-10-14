@@ -1,4 +1,5 @@
 #include "ConditionEngine/Condition.h"
+#include "ConditionEngine/Availability.h"
 #include "ConditionEngine/Forms.h"
 #include "ConditionEngine/Registry.h"
 
@@ -7,6 +8,10 @@
 #include <sstream>
 
 namespace ConditionEngine {
+
+    bool Condition::EvaluateAvailable(const EvaluationContext& context) const {
+        return Availability::Get().Check(*this).Ready() && Evaluate(context);
+    }
 
     // ── Dot-accessor helper ─────────────────────────────────────────────────
     // Given a param reference like "MyDial.dialUUID", try to resolve it by:
@@ -189,6 +194,18 @@ namespace ConditionEngine {
             case ComparisonOperator::LessEqual:    return "<=";
         }
         return "==";
+    }
+
+    std::string ComparisonOpToName(ComparisonOperator op) {
+        switch (op) {
+            case ComparisonOperator::Equal:        return "Equal";
+            case ComparisonOperator::NotEqual:     return "NotEqual";
+            case ComparisonOperator::GreaterThan:  return "Greater";
+            case ComparisonOperator::LessThan:     return "Less";
+            case ComparisonOperator::GreaterEqual: return "GreaterOrEqual";
+            case ComparisonOperator::LessEqual:    return "LessOrEqual";
+        }
+        return "Equal";
     }
 
     ComparisonOperator ParseComparisonOperator(const nlohmann::json& json, const std::string& key) {

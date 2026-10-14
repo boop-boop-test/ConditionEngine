@@ -59,25 +59,35 @@ namespace ConditionEngine {
             return [](const json& j) { return std::make_unique<T>(j.value("expectedState", true)); };
         }
 
-        void Add(Registry& r, std::string name, std::vector<std::string> aliases, ConditionFactory factory,
-                 std::vector<std::string> positional = {}, std::string compareField = {},
-                 std::string description = {}, std::vector<std::string> derived = {}) {
-            TypeInfo info;
-            info.name = std::move(name);
-            info.aliases = std::move(aliases);
-            info.factory = std::move(factory);
-            info.positional = std::move(positional);
-            info.compareField = std::move(compareField);
-            info.description = std::move(description);
-            info.derived = std::move(derived);
-            r.RegisterType(std::move(info));
-        }
     }
 
     void RegisterBuiltinTypes(Registry& r) {
-        // ── Composition ──────────────────────────────────────────────────────
-        Add(r, "Logical", {"LogicalCondition"},
-            [](const json& j) {
+        using namespace Field;
+
+        // ── Categories ───────────────────────────────────────────────────────
+        r.RegisterCategory({"logic", "Logic", 0});
+        r.RegisterCategory({"time", "Time & Date", 10});
+        r.RegisterCategory({"location", "Location", 20});
+        r.RegisterCategory({"weather", "Weather & Climate", 30});
+        r.RegisterCategory({"actor", "Actor", 40});
+        r.RegisterCategory({"actorState", "Actor State", 50});
+        r.RegisterCategory({"gear", "Gear & Inventory", 60});
+        r.RegisterCategory({"quest", "Quests", 70});
+        r.RegisterCategory({"world", "World & Mods", 80});
+        r.RegisterCategory({"script", "Scripts & Variables", 90});
+        r.RegisterCategory({"game", "Vanilla Conditions", 95});
+        r.RegisterCategory({"other", "Other", 100});
+
+        // ── Logic ────────────────────────────────────────────────────────────
+        TypeBuilder("Logical", "Logic Group", "logic")
+            .Aliases({"LogicalCondition"})
+            .Icon("∧")
+            .Describe("And/Or/Not over child conditions")
+            .Fields({Enum("operator", "Operator", Options({"And", "Or", "Not"}), "And"),
+                     Children("children", "Conditions")})
+            .Positional({})
+            .Hidden()  // composed with && / || / ! rather than picked as a type
+            .Factory([](const json& j) {
                 std::vector<std::unique_ptr<Condition>> children;
                 if (j.contains("children") && j["children"].is_array()) {
                     for (const auto& childJson : j["children"]) {
@@ -85,76 +95,160 @@ namespace ConditionEngine {
                     }
                 }
                 return std::make_unique<LogicalCondition>(ParseLogicalOperator(j), std::move(children));
-            },
-            {}, {}, "And/Or/Not over child conditions");
+            })
+            .Register(r);
 
-        Add(r, "Constant", {"ConstantCondition"},
-            [](const json& j) { return std::make_unique<ConstantCondition>(j.value("value", true)); },
-            {"value"}, {}, "Always true or always false");
+        TypeBuilder("Constant", "Always / Never", "logic")
+            .Aliases({"ConstantCondition"})
+            .Icon("⊤")
+            .Describe("Always true or always false")
+            .Fields({Bool("value", "Value", true)})
+            .Factory([](const json& j) { return std::make_unique<ConstantCondition>(j.value("value", true)); })
+            .Register(r);
 
-        Add(r, "Rule", {"RuleReferenceCondition"},
-            [](const json& j) {
+        TypeBuilder("Rule", "Rule Reference", "logic")
+            .Aliases({"RuleReferenceCondition"})
+            .Icon("📋")
+            .Describe("Use another rule or named condition")
+            .Fields({Named("ruleName", "Rule").Describe("Name of the rule or named condition"),
+                     String("ruleUUID", "Rule UUID").Describe("Set by editors that pick rules by id"),
+                     Bool("inverted", "Invert result (NOT)", false)})
+            .Positional({"ruleName"})
+            .Factory([](const json& j) {
                 return std::make_unique<RuleReferenceCondition>(
                     j.value("ruleName", ""), j.value("inverted", false), j.value("ruleUUID", ""));
-            },
-            {"ruleName"}, {}, "Evaluates a named condition");
+            })
+            .Register(r);
 
-        // ── Time ─────────────────────────────────────────────────────────────
-        Add(r, "Time", {"TimeCondition", "TimeOfDay"},
-            [](const json& j) {
+        // ── Time & date ──────────────────────────────────────────────────────
+        TypeBuilder("Time", "Time of Day", "time")
+            .Aliases({"TimeCondition", "TimeOfDay"})
+            .Icon("🕐")
+            .Describe("Game hour within [start, end); wraps past midnight when start > end")
+            .Fields({Int("startHour", "Start Hour", 6).Range(0, 23), Int("endHour", "End Hour", 18).Range(0, 23)})
+            .Positional({"startHour", "endHour"})
+            .Derived({"isRange"})
+            .Factory([](const json& j) {
                 return std::make_unique<TimeCondition>(j.value("startHour", 0.0f), j.value("endHour", 0.0f),
                                                        ParseComparisonOperator(j));
-            },
-            {"startHour", "endHour"}, {}, "Game hour within [startHour, endHour)", {"isRange"});
+            })
+            .Register(r);
 
-        Add(r, "DayOfWeek", {"DayOfWeekCondition"},
-            [](const json& j) {
+        TypeBuilder("DayOfWeek", "Day of Week", "time")
+            .Aliases({"DayOfWeekCondition"})
+            .Icon("📅")
+            .Describe("Bitmask of allowed weekdays (bit 0 = Sundas ... bit 6 = Loredas)")
+            .Fields({Int("allowedDays", "Allowed Days (bitmask)", 0x7F).Range(0, 0x7F)})
+            .Derived({"dayNames"})
+            .Factory([](const json& j) {
                 return std::make_unique<DayOfWeekCondition>(static_cast<std::uint8_t>(j.value("allowedDays", 0x7F)));
-            },
-            {"allowedDays"}, {}, "Bitmask of allowed weekdays (bit 0 = Sundas)", {"dayNames"});
+            })
+            .Register(r);
 
-        Add(r, "Month", {"MonthCondition"},
-            [](const json& j) {
+        TypeBuilder("Month", "Month", "time")
+            .Aliases({"MonthCondition"})
+            .Icon("📅")
+            .Describe("Bitmask of allowed months (bit 0 = Morning Star ... bit 11 = Evening Star)")
+            .Fields({Int("allowedMonths", "Allowed Months (bitmask)", 0x0FFF).Range(0, 0x0FFF)})
+            .Derived({"monthNames"})
+            .Factory([](const json& j) {
                 return std::make_unique<MonthCondition>(static_cast<std::uint16_t>(j.value("allowedMonths", 0x0FFF)));
-            },
-            {"allowedMonths"}, {}, "Bitmask of allowed months (bit 0 = Morning Star)", {"monthNames"});
+            })
+            .Register(r);
 
-        Add(r, "DayOfMonth", {"DayOfMonthCondition"},
-            [](const json& j) { return std::make_unique<DayOfMonthCondition>(j.value("allowedDays", 0x7FFFFFFFu)); },
-            {"allowedDays"}, {}, "Bitmask of allowed days of the month (bit 0 = day 1)");
+        TypeBuilder("DayOfMonth", "Day of Month", "time")
+            .Aliases({"DayOfMonthCondition"})
+            .Icon("📅")
+            .Describe("Bitmask of allowed days of the month (bit 0 = day 1)")
+            .Fields({Int("allowedDays", "Allowed Days (bitmask)", 0x7FFFFFFF)})
+            .Factory([](const json& j) { return std::make_unique<DayOfMonthCondition>(j.value("allowedDays", 0x7FFFFFFFu)); })
+            .Register(r);
 
-        // ── Location / weather ───────────────────────────────────────────────
-        Add(r, "Location", {"LocationCondition"},
-            [](const json& j) {
+        // ── Location ─────────────────────────────────────────────────────────
+        TypeBuilder("Location", "Location (legacy)", "location")
+            .Aliases({"LocationCondition"})
+            .Describe("Legacy location check - use InteriorExterior / LocationType / InLocation")
+            .Fields({Int("locationType", "Location Type", 0), String("customLocation", "Location Name", "")})
+            .Hidden()
+            .Factory([](const json& j) {
                 return std::make_unique<LocationCondition>(
                     static_cast<LocationCondition::LocationType>(j.value("locationType", 0)),
                     j.value("customLocation", ""));
-            },
-            {"locationType", "customLocation"}, {}, "Legacy location check");
+            })
+            .Register(r);
 
-        Add(r, "InteriorExterior", {"InteriorExteriorCondition"},
-            [](const json& j) { return std::make_unique<InteriorExteriorCondition>(j.value("expectInterior", true)); },
-            {"expectInterior"}, {}, "Actor is in an interior (true) or exterior (false) cell");
+        TypeBuilder("InteriorExterior", "Interior/Exterior", "location")
+            .Aliases({"InteriorExteriorCondition"})
+            .Icon("🏠")
+            .Describe("Actor is in an interior or exterior cell")
+            .Fields({Bool("expectInterior", "Interior (unchecked = exterior)", true)})
+            .Factory([](const json& j) { return std::make_unique<InteriorExteriorCondition>(j.value("expectInterior", true)); })
+            .Register(r);
 
-        Add(r, "LocationType", {"LocationTypeCondition"},
-            [](const json& j) { return std::make_unique<LocationTypeCondition>(ParseLocationCategory(j)); },
-            {"category"}, {}, "Current location has the category's LocType keywords");
+        TypeBuilder("LocationType", "Location Type", "location")
+            .Aliases({"LocationTypeCondition"})
+            .Icon("🏰")
+            .Describe("Current location (or a parent) has the category's LocType keywords")
+            .Fields({Enum("category", "Location Category",
+                          {{"Town", "Town", "LocTypeTown"},
+                           {"City", "City", "LocTypeCity"},
+                           {"Dungeon", "Dungeon", "LocTypeDungeon"},
+                           {"Inn", "Inn", "LocTypeInn"},
+                           {"Store", "Store", "LocTypeStore"},
+                           {"Temple", "Temple", "LocTypeTemple"},
+                           {"Guild", "Guild Hall", "LocTypeGuild"},
+                           {"Dwelling", "Dwelling/Home", "LocTypeDwelling"},
+                           {"Farm", "Farm", "LocTypeFarm / LumberMill"},
+                           {"Military", "Military", "Camp/Fort/Barracks"},
+                           {"Jail", "Jail", "LocTypeJail"},
+                           {"PlayerHome", "Player Home", "LocTypePlayerHouse"},
+                           {"Castle", "Castle", "LocTypeCastle"},
+                           {"Wilderness", "Wilderness", "No location type"}},
+                          "Town")})
+            .Factory([](const json& j) { return std::make_unique<LocationTypeCondition>(ParseLocationCategory(j)); })
+            .Register(r);
 
-        Add(r, "LocationKeyword", {"LocationKeywordCondition"},
-            [](const json& j) {
+        TypeBuilder("LocationKeyword", "Location Keyword", "location")
+            .Aliases({"LocationKeywordCondition"})
+            .Icon("🏷️")
+            .Describe("Current location has any/all of the keywords")
+            .Fields({FormList("keywords", "Location Keywords", {"Keyword"}).Describe("e.g. LocTypeCity, LocTypeDwelling"),
+                     Bool("matchAny", "Match ANY keyword (unchecked = ALL)", true)})
+            .Factory([](const json& j) {
                 return std::make_unique<LocationKeywordCondition>(ReadStringList(j, "keywords"), j.value("matchAny", true));
-            },
-            {"keywords", "matchAny"}, {}, "Current location has any/all of the keywords");
+            })
+            .Register(r);
 
-        Add(r, "Weather", {"WeatherCondition"},
-            [](const json& j) {
+        // ── Weather & climate ────────────────────────────────────────────────
+        TypeBuilder("Weather", "Weather", "weather")
+            .Aliases({"WeatherCondition"})
+            .Icon("🌤️")
+            .Describe("Weather classification, or a weather's exact name")
+            .Fields({Enum("weatherType", "Weather Type", Options({"Clear", "Cloudy", "Rainy", "Snowy"}), "Clear")
+                         .Custom()
+                         .Describe("Clear/Cloudy/Rainy/Snowy classification, or a weather name")})
+            .Factory([](const json& j) {
                 return std::make_unique<WeatherCondition>(j.value("weatherType", j.value("weatherName", "")),
                                                           ParseComparisonOperator(j));
-            },
-            {"weatherType"}, {}, "Weather classification (Pleasant/Cloudy/Rainy/Snow) or name");
+            })
+            .Register(r);
 
-        Add(r, "Temperature", {"TemperatureCondition"},
-            [](const json& j) {
+        TypeBuilder("Temperature", "Temperature", "weather")
+            .Aliases({"TemperatureCondition"})
+            .Icon("🌡️")
+            .Describe("Temperature from the configured provider (ConditionEngine.ini [Temperature])")
+            .Fields({Enum("temperatureRange", "Temperature Range",
+                          {{"Freezing", "Freezing", "< 0"},
+                           {"Cold", "Cold", "0-40"},
+                           {"Comfortable", "Comfortable", "40-70"},
+                           {"Warm", "Warm", "70-90"},
+                           {"Hot", "Hot", "> 90"}},
+                          "Comfortable")
+                         .Describe("Preset range; overrides the exact temperature"),
+                     Float("targetTemperature", "Exact Temperature")})
+            .Positional({"temperatureRange"})
+            .Compare("targetTemperature")
+            .Factory([](const json& j) {
                 float temp = 0.0f;
                 auto op = ParseComparisonOperator(j);
                 if (j.contains("temperatureRange") && j["temperatureRange"].is_string()) {
@@ -168,100 +262,214 @@ namespace ConditionEngine {
                     temp = j.value("temperature", j.value("targetTemperature", 0.0f));
                 }
                 return std::make_unique<TemperatureCondition>(temp, op);
-            },
-            {"temperatureRange"}, "targetTemperature", "Temperature (needs a temperature provider)");
+            })
+            .Register(r);
 
         // ── Actor ────────────────────────────────────────────────────────────
-        Add(r, "Faction", {"FactionCondition"},
-            [](const json& j) {
+        TypeBuilder("Faction", "Faction", "actor")
+            .Aliases({"FactionCondition"})
+            .Icon("⚔️")
+            .Describe("Faction rank comparison (-1 = not in faction, 0 = member, 1+ = rank)")
+            .Fields({Form("factionId", "Faction", {"Faction"}).Required(),
+                     Comparison("operator", "Operator", "GreaterOrEqual"),
+                     Int("minRank", "Rank", 0).Range(-1, 127)})
+            .Positional({"factionId", "minRank"})
+            .Compare("minRank")
+            .Factory([](const json& j) {
                 return std::make_unique<FactionCondition>(j.value("factionId", j.value("factionName", "")),
                                                           j.value("minRank", j.value("minimumRank", 0)),
                                                           ParseComparisonOperator(j));
-            },
-            {"factionId", "minRank"}, "minRank", "Faction rank comparison");
+            })
+            .Register(r);
 
-        Add(r, "ActorValue", {"ActorValueCondition"},
-            [](const json& j) {
+        TypeBuilder("ActorValue", "Actor Value", "actor")
+            .Aliases({"ActorValueCondition"})
+            .Icon("💪")
+            .Describe("Actor value comparison, optionally as a percentage of the maximum")
+            .Fields({Enum("actorValue", "Actor Value",
+                          {{"Health", "Health"}, {"Magicka", "Magicka"}, {"Stamina", "Stamina"},
+                           {"CarryWeight", "Carry Weight"}, {"Level", "Level"}, {"Sneak", "Sneak Skill"}},
+                          "Health")
+                         .Custom()
+                         .Describe("Any actor value name"),
+                     Comparison("operator", "Operator", "GreaterOrEqual"),
+                     Float("value", "Value", 50),
+                     Bool("usePercentage", "Use percentage (vs absolute value)", true)})
+            .Positional({"actorValue", "value"})
+            .Compare("value")
+            .Factory([](const json& j) {
                 return std::make_unique<ActorValueCondition>(j.value("actorValue", j.value("actorValueName", "")),
                                                              j.value("value", j.value("targetValue", 0.0f)),
                                                              ParseComparisonOperator(j),
                                                              j.value("usePercentage", false));
-            },
-            {"actorValue", "value"}, "value", "Actor value comparison (optionally as % of max)");
+            })
+            .Register(r);
 
-        Add(r, "Race", {"RaceCondition"},
-            [](const json& j) { return std::make_unique<RaceCondition>(j.value("raceId", "")); },
-            {"raceId"}, {}, "Actor race (form string or editor ID)");
+        TypeBuilder("Race", "Race", "actor")
+            .Aliases({"RaceCondition"})
+            .Icon("🧬")
+            .Describe("Actor race")
+            .Fields({Form("raceId", "Race", {"Race"}).Required()})
+            .Factory([](const json& j) { return std::make_unique<RaceCondition>(j.value("raceId", "")); })
+            .Register(r);
 
-        Add(r, "Swimming", {"SwimmingCondition"}, ActorState<SwimmingCondition>(), {"expectedState"});
-        Add(r, "Sleeping", {"SleepingCondition"}, ActorState<SleepingCondition>(), {"expectedState"});
-        Add(r, "Mounting", {"MountingCondition", "Mounted"}, ActorState<MountingCondition>(), {"expectedState"});
-        Add(r, "InWater", {"InWaterCondition"}, ActorState<InWaterCondition>(), {"expectedState"});
-        Add(r, "LoveScene", {"LoveSceneCondition"}, ActorState<LoveSceneCondition>(), {"expectedState"});
-        Add(r, "Combat", {"CombatCondition"}, ActorState<CombatCondition>(), {"expectedState"});
+        auto actorState = [&r](const char* name, const char* label, const char* icon, const char* description,
+                               std::vector<std::string> aliases, ConditionFactory factory) {
+            TypeBuilder(name, label, "actorState")
+                .Aliases(std::move(aliases))
+                .Icon(icon)
+                .Describe(description)
+                .Fields({Bool("expectedState", "Expected", true)})
+                .Factory(std::move(factory))
+                .Register(r);
+        };
+        actorState("Swimming", "Swimming", "🏊", "Actor is swimming", {"SwimmingCondition"}, ActorState<SwimmingCondition>());
+        actorState("Sleeping", "Sleeping", "😴", "Actor is sleeping", {"SleepingCondition"}, ActorState<SleepingCondition>());
+        actorState("Mounting", "Mounted", "🐎", "Actor is riding a mount", {"MountingCondition", "Mounted"},
+                   ActorState<MountingCondition>());
+        actorState("InWater", "In Water", "💧", "Actor is standing or wading in water", {"InWaterCondition"},
+                   ActorState<InWaterCondition>());
+        actorState("LoveScene", "In Love Scene", "💞", "Actor is in an OStim/SexLab scene (needs a provider)",
+                   {"LoveSceneCondition"}, ActorState<LoveSceneCondition>());
+        actorState("Combat", "In Combat", "🗡️", "Actor is in combat", {"CombatCondition"}, ActorState<CombatCondition>());
 
-        Add(r, "HasSlotsEquipped", {"HasSlotsEquippedCondition"},
-            [](const json& j) {
+        TypeBuilder("HasSlotsEquipped", "Slots Equipped", "gear")
+            .Aliases({"HasSlotsEquippedCondition"})
+            .Icon("🛡️")
+            .Describe("Biped slots (30-61) the actor is wearing armor in")
+            .Fields({IntList("slots", "Armor Slots").Describe("Biped slot numbers 30-61"),
+                     Enum("matchMode", "Match Mode",
+                          {{"any", "Any - at least one slot equipped"}, {"all", "All - every slot must be equipped"}},
+                          "any")})
+            .Factory([](const json& j) {
                 return std::make_unique<HasSlotsEquippedCondition>(ReadUIntList(j, "slots"),
                                                                    j.value("matchMode", "any") == "all");
-            },
-            {"slots", "matchMode"}, {}, "Biped slots (30-61) worn by the actor");
+            })
+            .Register(r);
 
-        // ── World / scripts ──────────────────────────────────────────────────
-        Add(r, "GlobalVariable", {"GlobalVariableCondition"},
-            [](const json& j) {
-                return std::make_unique<GlobalVariableCondition>(
-                    j.value("globalId", j.value("globalName", j.value("variableName", ""))),
-                    j.value("value", j.value("targetValue", 0.0f)), ParseComparisonOperator(j));
-            },
-            {"globalName", "value"}, "value", "Global variable comparison");
-
-        Add(r, "QuestStage", {"QuestStageCondition"},
-            [](const json& j) {
+        // ── Quests ───────────────────────────────────────────────────────────
+        TypeBuilder("QuestStage", "Quest Stage", "quest")
+            .Aliases({"QuestStageCondition"})
+            .Icon("📜")
+            .Describe("Quest's current stage comparison")
+            .Fields({Form("questId", "Quest", {"Quest"}).Required(),
+                     Comparison("operator", "Operator", "GreaterOrEqual"),
+                     Int("stage", "Stage", 0).Range(0, 65535)})
+            .Positional({"questId", "stage"})
+            .Compare("stage")
+            .Factory([](const json& j) {
                 return std::make_unique<QuestStageCondition>(j.value("questId", j.value("questName", "")),
                                                              j.value("stage", j.value("targetStage", 0)),
                                                              ParseComparisonOperator(j));
-            },
-            {"questId", "stage"}, "stage", "Quest stage comparison");
+            })
+            .Register(r);
 
-        Add(r, "QuestCategory", {"QuestCategoryCondition"},
-            [](const json& j) -> std::unique_ptr<Condition> {
+        TypeBuilder("QuestCategory", "Quest Category", "quest")
+            .Aliases({"QuestCategoryCondition"})
+            .Icon("📖")
+            .Describe("Any quest in the selected categories is active with displayed objectives")
+            .Fields({EnumList("categories", "Quest Categories",
+                              {{"MainQuest", "Main Quest", "Dragonborn prophecy questline"},
+                               {"Companions", "Companions"},
+                               {"CollegeOfWinterhold", "College of Winterhold"},
+                               {"ThievesGuild", "Thieves Guild"},
+                               {"DarkBrotherhood", "Dark Brotherhood"},
+                               {"CivilWar", "Civil War"},
+                               {"Daedric", "Daedric"},
+                               {"Dawnguard", "Dawnguard (DLC)"},
+                               {"Dragonborn", "Dragonborn (DLC)"},
+                               {"SideQuest", "Side Quest"},
+                               {"Miscellaneous", "Miscellaneous"}})
+                         .Default(json::array({"MainQuest"}))})
+            .Factory([](const json& j) -> std::unique_ptr<Condition> {
                 // Multi-select "categories" (array or comma-separated), or legacy single "category"
                 if (j.contains("categories")) {
                     return std::make_unique<QuestCategoryCondition>(ReadStringList(j, "categories"));
                 }
                 return std::make_unique<QuestCategoryCondition>(j.value("category", ""));
-            },
-            {"categories"}, {}, "An active quest of the category has displayed objectives");
+            })
+            .Register(r);
 
-        Add(r, "ScriptValue", {"ScriptValueCondition"},
-            [](const json& j) {
+        // ── Scripts & variables ──────────────────────────────────────────────
+        TypeBuilder("GlobalVariable", "Global Variable", "script")
+            .Aliases({"GlobalVariableCondition"})
+            .Icon("🌐")
+            .Describe("Global variable comparison")
+            .Fields({Form("globalId", "Global Variable", {"Global"}).Required(),
+                     Comparison("operator", "Operator", "Equal"),
+                     Float("value", "Value", 0)})
+            .Positional({"globalId", "value"})
+            .Compare("value")
+            .Factory([](const json& j) {
+                return std::make_unique<GlobalVariableCondition>(
+                    j.value("globalId", j.value("globalName", j.value("variableName", ""))),
+                    j.value("value", j.value("targetValue", 0.0f)), ParseComparisonOperator(j));
+            })
+            .Register(r);
+
+        TypeBuilder("ScriptValue", "Script Property", "script")
+            .Aliases({"ScriptValueCondition"})
+            .Icon("📝")
+            .Describe("A Papyrus script property on the actor")
+            .Fields({String("scriptName", "Script").Required(),
+                     String("variableName", "Property").Required(),
+                     Enum("valueType", "Value Type", Options({"int", "float", "bool", "string"}), "float"),
+                     Comparison("operator", "Operator", "Equal"),
+                     String("targetValue", "Value", "")})
+            .Positional({"scriptName", "variableName", "valueType", "targetValue"})
+            .Compare("targetValue")
+            .Factory([](const json& j) {
                 return std::make_unique<ScriptValueCondition>(j.value("scriptName", ""), j.value("variableName", ""),
                                                               j.value("valueType", "float"),
                                                               ReadScalarAsString(j, "targetValue"),
                                                               ParseComparisonOperator(j));
-            },
-            {"scriptName", "variableName", "valueType", "targetValue"}, "targetValue",
-            "Papyrus script property on the actor");
+            })
+            .Register(r);
 
-        Add(r, "Random", {"RandomCondition"},
-            [](const json& j) {
+        TypeBuilder("Random", "Random (Seeded)", "other")
+            .Aliases({"RandomCondition"})
+            .Icon("🎲")
+            .Describe("Deterministic chance seeded by game state - stable until the seed changes")
+            .Fields({Int("chance", "Chance (%)", 50).Range(0, 100),
+                     Enum("seedType", "Seed Type",
+                          {{"Location", "Per Location"}, {"ActorName", "Per Actor Name"}, {"Day", "Per Day"},
+                           {"Time", "Per Time Interval"}},
+                          "Location"),
+                     String("salt", "Salt (optional)", "").Describe("Unique identifier for independent rolls"),
+                     Int("intervalHours", "Interval (hours)", 1).Range(1, 24).Describe("For the Time seed")})
+            .Positional({"chance", "seedType", "salt", "intervalHours"})
+            .Factory([](const json& j) {
                 return std::make_unique<RandomCondition>(RandomCondition::ParseSeedType(j.value("seedType", "Location")),
                                                          j.value("chance", 50), j.value("salt", ""),
                                                          j.value("intervalHours", 1));
-            },
-            {"chance", "seedType", "salt", "intervalHours"}, {}, "Deterministic seeded chance");
+            })
+            .Register(r);
 
         // ── Vanilla Creation Kit condition functions ─────────────────────────
-        Add(r, "Game", {"GameCondition", "CK"},
-            [](const json& j) {
+        TypeBuilder("Game", "Vanilla Condition Function", "game")
+            .Aliases({"GameCondition", "CK"})
+            .Icon("⚙️")
+            .Describe("Any Creation Kit condition function, e.g. GetLevel >= 20, WornHasKeyword(ArmorHeavy)")
+            .Fields({String("function", "Function").Required().Describe("Condition function name, e.g. IsSneaking"),
+                     String("param1", "Parameter 1").Describe("Form string, editor ID, actor value or number"),
+                     String("param2", "Parameter 2"),
+                     Comparison("operator", "Operator", "NotEqual"),
+                     Float("value", "Value", 0),
+                     Enum("runOn", "Run On",
+                          {{"Subject", "Subject (the actor)"}, {"Target", "Target (the player)"}, {"Player", "Player"}},
+                          "Subject")})
+            .Positional({"function", "param1", "param2"})
+            .Compare("value")
+            .Factory([](const json& j) {
                 std::vector<std::string> params;
                 if (j.contains("params") && j["params"].is_array()) {
                     for (const auto& p : j["params"]) params.push_back(p.is_string() ? p.get<std::string>() : p.dump());
                 } else {
                     for (const char* key : {"param1", "param2"}) {
                         if (!j.contains(key)) break;
-                        params.push_back(ReadScalarAsString(j, key));
+                        auto value = ReadScalarAsString(j, key);
+                        if (value.empty()) break;
+                        params.push_back(std::move(value));
                     }
                 }
                 // Bare Game(IsSneaking) means "function returned non-zero"
@@ -272,9 +480,8 @@ namespace ConditionEngine {
                 return std::make_unique<GameCondition>(
                     j.value("function", ""), std::move(params), op, j.value("value", 0.0f),
                     GameCondition::ParseRunOn(j.contains("runOn") && j["runOn"].is_string() ? j["runOn"].get<std::string>() : ""));
-            },
-            {"function", "param1", "param2"}, "value",
-            "Any vanilla condition function, e.g. Game(GetLevel) >= 20, Game(WornHasKeyword, ArmorHeavy)");
+            })
+            .Register(r);
 
         RegisterActorConditionTypes(r);
         RegisterGearConditionTypes(r);

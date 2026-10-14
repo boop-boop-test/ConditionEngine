@@ -88,7 +88,7 @@ namespace ConditionEngine {
         json["variableName"] = variableName;
         json["valueType"] = valueType;
         json["targetValue"] = targetValue;
-        json["operation"] = static_cast<int>(operation);
+        json["operator"] = ComparisonOpToName(operation);
         return json;
     }
 

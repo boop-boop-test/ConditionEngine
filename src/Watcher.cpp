@@ -1,4 +1,5 @@
 #include "ConditionEngine/Watcher.h"
+#include "ConditionEngine/Availability.h"
 #include "ConditionEngine/Conditions/ActorConditions.h"
 #include "ConditionEngine/EvaluationContext.h"
 #include "ConditionEngine/Registry.h"
@@ -202,7 +203,7 @@ namespace ConditionEngine {
         if (IsWorldReady()) {
             if (auto* target = ResolveActor(entry.actorId)) {
                 EvaluationContext context(target);
-                entry.lastResult = entry.condition->Evaluate(context);
+                entry.lastResult = entry.condition->EvaluateAvailable(context);
             }
         }
 
@@ -357,7 +358,7 @@ namespace ConditionEngine {
                 if (!target) continue;
                 context = std::make_unique<EvaluationContext>(target);
             }
-            results.emplace_back(item.id, item.condition->Evaluate(*context));
+            results.emplace_back(item.id, item.condition->EvaluateAvailable(*context));
         }
 
         struct Fire {
@@ -392,6 +393,12 @@ namespace ConditionEngine {
     }
 
     void Watcher::Install(std::chrono::milliseconds detectInterval) {
+        static const auto availabilitySubscription = Availability::Get().Subscribe([](std::uint64_t) {
+            if (auto* tasks = SKSE::GetTaskInterface()) tasks->AddTask([]() {
+                Watcher::Get().NotifyEvent(EventDependency::Availability, nullptr);
+            });
+        });
+        (void)availabilitySubscription;
         {
             std::lock_guard lock(mutex_);
             if (installed_) return;

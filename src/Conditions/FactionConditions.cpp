@@ -98,7 +98,7 @@ namespace ConditionEngine {
         json["type"] = "Faction";
         json["factionId"] = factionName;
         json["minRank"] = rank;
-        json["operation"] = ComparisonOpToSymbol(operation);  // ParseComparisonOperator checks "operation" first
+        json["operator"] = ComparisonOpToName(operation);
         return json;
     }
 

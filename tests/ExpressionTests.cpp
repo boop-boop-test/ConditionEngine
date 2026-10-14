@@ -3,8 +3,12 @@
 
 #include "ConditionEngine/ConditionEngine.h"
 #include "ConditionEngine/Expression.h"
+#include "ConditionEngine/Availability.h"
+#include "ConditionEngine/Conditions/CallbackCondition.h"
 
 #include <cstdio>
+#include <cstring>
+#include <fstream>
 
 namespace {
     using json = nlohmann::json;
@@ -64,7 +68,17 @@ namespace {
     }
 }
 
-int main() {
+int main(int argc, char** argv) {
+    // --dump-catalog <file> / --dump-schema <file>: write generated JSON and exit
+    for (int i = 1; i + 1 < argc; i += 2) {
+        nlohmann::json out;
+        if (std::strcmp(argv[i], "--dump-catalog") == 0) out = Registry::Get().GetCatalog();
+        else if (std::strcmp(argv[i], "--dump-schema") == 0) out = Registry::Get().GetJsonSchema();
+        else continue;
+        std::ofstream(argv[i + 1]) << out.dump(2) << "\n";
+    }
+    if (argc > 1) return 0;
+
     // ── Basic calls ──────────────────────────────────────────────────────────
     ExpectJson("Time(20, 6)", {{"type", "Time"}, {"startHour", 20}, {"endHour", 6}});
     ExpectJson("combat", {{"type", "Combat"}});
@@ -179,6 +193,130 @@ int main() {
         Check(registry.FindNamed("TestAlways") != nullptr, "named lookup");
         Check(registry.UnregisterSource("tests") == 1, "unregister by source");
         Check(registry.FindNamed("TestAlways") == nullptr, "named removed");
+    }
+
+    // ── Catalog / schema ─────────────────────────────────────────────────────
+    {
+        auto& registry = Registry::Get();
+        const auto catalog = registry.GetCatalog();
+        std::unordered_set<std::string> categories;
+        for (const auto& c : catalog["categories"]) categories.insert(c["id"].get<std::string>());
+
+        std::size_t visible = 0;
+        for (const auto& t : catalog["types"]) {
+            const auto name = t["name"].get<std::string>();
+            Check(categories.contains(t["category"].get<std::string>()), name + " has a registered category");
+            Check(!t["label"].get<std::string>().empty(), name + " has a label");
+            if (!t.value("hidden", false)) {
+                ++visible;
+                Check(!t["description"].get<std::string>().empty(), name + " has a description");
+            }
+            // Every field key a type declares must survive a factory round trip
+            json defaults{{"type", name}};
+            for (const auto& f : t["fields"]) {
+                if (f.contains("default")) defaults[f["key"].get<std::string>()] = f["default"];
+            }
+            auto condition = Condition::FromJson(defaults);
+            Check(condition != nullptr, name + " builds from its schema defaults");
+            if (t.contains("compareField")) {
+                bool hasComparison = false;
+                for (const auto& f : t["fields"]) hasComparison |= f["type"] == "comparison";
+                Check(hasComparison, name + " exposes a comparison field");
+            }
+        }
+        Check(visible >= 50, "at least 50 pickable types (" + std::to_string(visible) + ")");
+
+        const auto schema = registry.GetJsonSchema();
+        Check(schema["oneOf"].size() == catalog["types"].size(), "schema has one variant per type");
+
+        // Schema metadata round-trips through the plugin-facing JSON form
+        auto field = FieldFromJson(FieldToJson(Field::Enum("hand", "Hand", Field::Options({"Left", "Right"}), "Left")));
+        Check(field.type == FieldType::Enum && field.options.size() == 2 && field.defaultValue == "Left",
+              "field schema round-trips");
+    }
+
+
+    // Integration availability is distinct from a condition's boolean value.
+    {
+        auto& availability = Availability::Get();
+        auto& registry = Registry::Get();
+        int evaluated = 0, notifications = 0;
+        TypeBuilder("TestIntegration", "Test integration", "world")
+            .RequiresPlugins({"TestDependency.esp"}).Aliases({"TestAlias"})
+            .Factory([&](const json& j) {
+                return std::make_unique<CallbackCondition>("test", [&](const EvaluationContext&) {
+                    ++evaluated; return false;
+                }, EventDependency::None, j);
+            }).Register(registry);
+        std::string error;
+        auto condition = Expression::CompileAny("!TestIntegration", &error);
+        Check(condition && availability.Check(*condition).state == AvailabilityState::Pending, "plugin snapshot starts pending");
+        const auto subscription = availability.Subscribe([&](std::uint64_t revision) {
+            ++notifications;
+            Check(availability.Revision() >= revision, "availability callback can query without deadlock");
+            (void)registry.GetCatalog();
+        });
+        availability.SetLoadedPlugins({"Skyrim.esm"});
+        Check(!availability.Check(*condition).Ready(), "missing required plugin suspends negated expression");
+        EvaluationContext context(nullptr);
+        Check(!condition->EvaluateAvailable(context) && evaluated == 0, "NOT cannot turn unavailable into true or invoke callback");
+        auto disjunction = Expression::CompileAny("true || TestIntegration", &error);
+        Check(!disjunction->EvaluateAvailable(context), "unavailable dependency suspends whole OR expression");
+        const auto before = notifications;
+        availability.SetLoadedPlugins({"skyrim.ESM"});
+        Check(notifications == before, "unchanged plugin snapshot does not notify");
+        availability.SetLoadedPlugins({"Skyrim.esm", "TESTDEPENDENCY.ESP"});
+        Check(availability.Check(*condition).Ready() && condition->EvaluateAvailable(context), "plugin recovery resumes NOT normally");
+        Check(availability.SetTypeStatus("testalias", {AvailabilityState::Unavailable, "Integration disabled"}), "status resolves aliases");
+        Check(!condition->EvaluateAvailable(context), "runtime integration disable suspends rule");
+        Check(availability.Check(*condition).reason == "Integration disabled", "runtime reason retained");
+        availability.SetTypeStatus("TestIntegration", {AvailabilityState::Pending, "Waiting for data"});
+        Check(availability.Check(*condition).state == AvailabilityState::Pending, "runtime pending stays distinct");
+        availability.SetTypeStatus("TestIntegration", {});
+        Check(condition->EvaluateAvailable(context), "runtime recovery resumes saved expression");
+        auto form = Expression::CompileAny("!Faction(\"0x000002|Absent.esp\")", &error);
+        Check(form && !availability.Check(*form).Ready(), "missing form owner suspends generic faction condition");
+        auto pluginTest = Expression::CompileAny("IsPluginLoaded(\"Absent.esp\")", &error);
+        Check(pluginTest && availability.Check(*pluginTest).Ready(), "plugin-presence check is itself always available");
+        registry.RegisterNamed("AvailabilityNamed", std::shared_ptr<const Condition>(Expression::CompileAny("TestIntegration", &error)));
+        auto named = Expression::CompileAny("!@AvailabilityNamed", &error);
+        availability.SetTypeStatus("TestIntegration", {AvailabilityState::Unavailable, "Missing native API"});
+        Check(named && !named->EvaluateAvailable(context), "named condition propagates unavailable dependency");
+        registry.RegisterNamed("AvailabilityCycle", std::shared_ptr<const Condition>(Expression::CompileAny("@AvailabilityCycle", &error)));
+        auto cycle = Expression::CompileAny("@AvailabilityCycle", &error);
+        Check(cycle && !availability.Check(*cycle).Ready(), "named dependency cycles do not recurse forever");
+        Check(HasDependency(condition->GetEffectiveEventDependencies(), EventDependency::Availability), "watches listen for availability changes");
+        const auto catalog = registry.GetCatalog();
+        bool found = false;
+        for (const auto& type : catalog["types"]) if (type["name"] == "TestIntegration") {
+            found = true;
+            Check(type["requiresPlugins"] == json::array({"TestDependency.esp"}) &&
+                  type["availability"]["available"] == false, "catalog keeps unavailable type with requirement and reason");
+        }
+        Check(found, "unavailable custom type stays registered");
+
+        const auto savedJson = condition->ToJsonComplete();
+        availability.SetTypeStatus("TestIntegration", {});
+        Check(condition->ToJsonComplete() == savedJson, "readiness changes preserve saved condition settings");
+        auto future = Expression::CompileAny("!@FutureAvailability", &error);
+        Check(future && !availability.Check(*future).Ready(), "missing named preset suspends expression");
+        const auto beforeNamed = notifications;
+        registry.RegisterNamed("FutureAvailability", std::shared_ptr<const Condition>(Expression::CompileAny("true", &error)));
+        Check(notifications > beforeNamed && availability.Check(*future).Ready(), "named preset recovery notifies subscribers");
+        registry.UnregisterNamed("FutureAvailability");
+        Check(!availability.Check(*future).Ready(), "named preset removal suspends saved expression again");
+        registry.RegisterNamed("OpaqueAvailability", std::make_shared<CallbackCondition>("opaque",
+            [](const EvaluationContext&) { return false; }, EventDependency::None,
+            json{{"type", "Rule"}, {"ruleName", "OpaqueAvailability"}}));
+        auto opaque = Expression::CompileAny("!@OpaqueAvailability", &error);
+        Check(opaque && availability.Check(*opaque).Ready(), "opaque named callback is not mistaken for a dependency cycle");
+        registry.UnregisterNamed("OpaqueAvailability");
+        availability.Unsubscribe(subscription);
+        const auto afterUnsubscribe = notifications;
+        availability.SetTypeStatus("TestIntegration", {});
+        Check(notifications == afterUnsubscribe, "unsubscribed listener receives no future updates");
+        registry.UnregisterNamed("AvailabilityNamed");
+        registry.UnregisterNamed("AvailabilityCycle");
     }
 
     std::printf("%d/%d checks passed\n", g_checks - g_failures, g_checks);

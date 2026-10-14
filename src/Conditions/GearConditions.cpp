@@ -65,7 +65,7 @@ namespace ConditionEngine {
     }
 
     nlohmann::json ItemCountCondition::ToJson() const {
-        return {{"type", "ItemCount"}, {"item", item_}, {"count", count_}, {"operator", ComparisonOpToString(op_)}};
+        return {{"type", "ItemCount"}, {"item", item_}, {"count", count_}, {"operator", ComparisonOpToName(op_)}};
     }
 
     std::unique_ptr<Condition> ItemCountCondition::Clone() const {
@@ -180,6 +180,8 @@ namespace ConditionEngine {
     // ============================================================================
 
     void RegisterGearConditionTypes(Registry& r) {
+        using namespace Field;
+
         auto itemCount = [](bool defaultHasItem) {
             return [defaultHasItem](const json& j) -> std::unique_ptr<Condition> {
                 const bool hasOp = j.contains("operator") || j.contains("operation");
@@ -191,37 +193,48 @@ namespace ConditionEngine {
             };
         };
 
-        TypeInfo count;
-        count.name = "ItemCount";
-        count.aliases = {"GetItemCount"};
-        count.factory = itemCount(false);
-        count.positional = {"item", "count"};
-        count.compareField = "count";
-        count.description = "Inventory count of an item (or of items with a keyword); ItemCount(x, 3) means >= 3";
-        r.RegisterType(std::move(count));
+        TypeBuilder("ItemCount", "Item Count", "gear")
+            .Aliases({"GetItemCount"})
+            .Icon("🎒")
+            .Describe("Inventory count of an item, or of all items with a keyword (ItemCount(x, 3) means >= 3)")
+            .Fields({Form("item", "Item or Keyword", {"Armor", "Weapon", "Ammo", "Ingredient", "Misc", "Potion",
+                                                       "Book", "Scroll", "SoulGem", "Key", "Light", "Keyword"})
+                         .Required(),
+                     Comparison("operator", "Operator", "GreaterOrEqual"),
+                     Int("count", "Count", 1).Range(0, 65535)})
+            .Positional({"item", "count"})
+            .Compare("count")
+            .Factory(itemCount(false))
+            .Register(r);
 
-        TypeInfo has;
-        has.name = "HasItem";
-        has.factory = itemCount(true);
-        has.positional = {"item", "count"};
-        has.compareField = "count";
-        has.description = "Actor carries at least one of the item (or of items with a keyword)";
-        r.RegisterType(std::move(has));
+        TypeBuilder("HasItem", "Has Item", "gear")
+            .Icon("🎒")
+            .Describe("Actor carries at least one of the item (or of items with a keyword)")
+            .Fields({Form("item", "Item or Keyword", {"Armor", "Weapon", "Ammo", "Ingredient", "Misc", "Potion",
+                                                       "Book", "Scroll", "SoulGem", "Key", "Light", "Keyword"})
+                         .Required()})
+            .Positional({"item", "count"})
+            .Compare("count")
+            .Factory(itemCount(true))
+            .Register(r);
 
-        TypeInfo weapon;
-        weapon.name = "EquippedWeaponType";
-        weapon.aliases = {"Holding", "WeaponType"};
-        weapon.factory = [](const json& j) {
-            return std::make_unique<EquippedWeaponTypeCondition>(
-                ReadStringList(j, "weaponTypes"),
-                EquippedWeaponTypeCondition::ParseHand(j.contains("hand") && j["hand"].is_string()
-                                                           ? j["hand"].get<std::string>()
-                                                           : "Either"));
-        };
-        weapon.positional = {"weaponTypes", "hand"};
-        weapon.description = "Held weapon type: Unarmed, Sword, Dagger, WarAxe, Mace, Greatsword, Battleaxe, "
-                             "Warhammer, Bow, Crossbow, Staff, Spell, Shield, Torch (hand = Either/Right/Left/Both)";
-        r.RegisterType(std::move(weapon));
+        TypeBuilder("EquippedWeaponType", "Held Weapon Type", "gear")
+            .Aliases({"Holding", "WeaponType"})
+            .Icon("🏹")
+            .Describe("What the actor holds in a hand")
+            .Fields({EnumList("weaponTypes", "Weapon Types",
+                              Options({"Unarmed", "Sword", "Dagger", "WarAxe", "Mace", "Greatsword", "Battleaxe",
+                                       "Warhammer", "Bow", "Crossbow", "Staff", "Spell", "Shield", "Torch"}))
+                         .Required(),
+                     Enum("hand", "Hand", Options({"Either", "Right", "Left", "Both"}), "Either")})
+            .Factory([](const json& j) {
+                return std::make_unique<EquippedWeaponTypeCondition>(
+                    ReadStringList(j, "weaponTypes"),
+                    EquippedWeaponTypeCondition::ParseHand(j.contains("hand") && j["hand"].is_string()
+                                                               ? j["hand"].get<std::string>()
+                                                               : "Either"));
+            })
+            .Register(r);
     }
 
 } // namespace ConditionEngine

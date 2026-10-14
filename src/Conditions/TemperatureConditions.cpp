@@ -20,7 +20,7 @@ namespace ConditionEngine {
         nlohmann::json json;
         json["type"] = "Temperature";
         json["targetTemperature"] = targetTemperature;
-        json["operation"] = static_cast<int>(operation);
+        json["operator"] = ComparisonOpToName(operation);
         std::string range = "Comfortable";
         if (targetTemperature < 0.1f) range = "Freezing";
         else if (targetTemperature < 40.1f) range = "Cold";

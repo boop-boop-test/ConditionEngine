@@ -234,7 +234,7 @@ namespace ConditionEngine {
         }
         // "!= 0" is the default (true-ish) and is left implicit
         if (!(op_ == ComparisonOperator::NotEqual && value_ == 0.0f)) {
-            json["operator"] = ComparisonOpToString(op_);
+            json["operator"] = ComparisonOpToName(op_);
             json["value"] = value_;
         }
         if (runOn_ != RunOn::Subject) json["runOn"] = RunOnName(runOn_);

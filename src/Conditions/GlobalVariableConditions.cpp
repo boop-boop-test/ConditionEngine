@@ -34,9 +34,9 @@ namespace ConditionEngine {
     nlohmann::json GlobalVariableCondition::ToJson() const {
         nlohmann::json json;
         json["type"] = "GlobalVariable";
-        json["globalName"] = globalName;
+        json["globalId"] = globalName;  // FromJson reads "globalId" first
         json["value"] = targetValue;
-        json["operation"] = static_cast<int>(operation);
+        json["operator"] = ComparisonOpToName(operation);
         return json;
     }
 

@@ -227,43 +227,54 @@ namespace ConditionEngine {
     // ============================================================================
 
     void RegisterWorldConditionTypes(Registry& r) {
-        auto place = [&r](PlaceCondition::Kind kind, std::vector<std::string> aliases, std::string description) {
-            TypeInfo info;
-            info.name = KindName(kind);
-            info.aliases = std::move(aliases);
+        using namespace Field;
+
+        auto place = [&r](PlaceCondition::Kind kind, const char* label, const char* icon, std::vector<std::string> aliases,
+                          const char* fieldLabel, std::vector<std::string> formTypes, const char* description) {
             const std::string field = KindField(kind);
-            info.positional = {field};
-            if (kind == PlaceCondition::Kind::Location) info.positional.push_back("includeParents");
-            info.description = std::move(description);
-            info.factory = [kind, field](const json& j) {
-                return std::make_unique<PlaceCondition>(kind, ReadStringList(j, field), j.value("includeParents", true));
-            };
-            r.RegisterType(std::move(info));
+            std::vector<FieldSchema> fields{
+                FormList(field, fieldLabel, std::move(formTypes)).Required().Describe("Form string, editor ID or name")};
+            if (kind == PlaceCondition::Kind::Location) {
+                fields.push_back(Bool("includeParents", "Also match parent locations", true));
+            }
+            TypeBuilder(KindName(kind), label, "location")
+                .Aliases(std::move(aliases))
+                .Icon(icon)
+                .Describe(description)
+                .Fields(std::move(fields))
+                .Factory([kind, field](const json& j) {
+                    return std::make_unique<PlaceCondition>(kind, ReadStringList(j, field), j.value("includeParents", true));
+                })
+                .Register(r);
         };
+        place(PlaceCondition::Kind::Worldspace, "Worldspace", "🗺️", {"InWorldspace"}, "Worldspaces", {"WorldSpace"},
+              "Actor's worldspace (exteriors only)");
+        place(PlaceCondition::Kind::Hold, "Hold", "👑", {"InHold"}, "Holds", {"Location"},
+              "Hold containing the actor's location (e.g. Whiterun)");
+        place(PlaceCondition::Kind::Location, "Specific Location", "📍", {"AtLocation"}, "Locations", {"Location"},
+              "Actor's location, or one of its parents");
+        place(PlaceCondition::Kind::Cell, "Specific Cell", "🚪", {"Cell"}, "Cells", {"Cell"},
+              "Actor's parent cell (editor ID or name)");
 
-        place(PlaceCondition::Kind::Worldspace, {"InWorldspace"}, "Actor's worldspace (exteriors only)");
-        place(PlaceCondition::Kind::Hold, {"InHold"}, "Hold containing the actor's location (e.g. Whiterun)");
-        place(PlaceCondition::Kind::Location, {"AtLocation"},
-              "Actor's location, or one of its parents unless includeParents=false");
-        place(PlaceCondition::Kind::Cell, {"Cell"}, "Actor's parent cell (editor ID or name)");
+        TypeBuilder("IsPluginLoaded", "Plugin Installed", "world")
+            .Aliases({"PluginLoaded", "HasPlugin"})
+            .Icon("🧩")
+            .Describe("A plugin (.esp/.esm/.esl) is active in the load order")
+            .Fields({String("plugin", "Plugin File").Required().Describe("e.g. Frostfall.esp")})
+            .Factory([](const json& j) {
+                return std::make_unique<PluginLoadedCondition>(
+                    j.contains("plugin") && j["plugin"].is_string() ? j["plugin"].get<std::string>() : "");
+            })
+            .Register(r);
 
-        TypeInfo plugin;
-        plugin.name = "IsPluginLoaded";
-        plugin.aliases = {"PluginLoaded", "HasPlugin"};
-        plugin.positional = {"plugin"};
-        plugin.description = "A plugin (.esp/.esm/.esl) is active in the load order";
-        plugin.factory = [](const json& j) {
-            return std::make_unique<PluginLoadedCondition>(
-                j.contains("plugin") && j["plugin"].is_string() ? j["plugin"].get<std::string>() : "");
-        };
-        r.RegisterType(std::move(plugin));
-
-        TypeInfo holiday;
-        holiday.name = "Holiday";
-        holiday.positional = {"holidays"};
-        holiday.description = "Today is a Tamriel holiday (e.g. Saturalia, NewLifeFestival) or Any";
-        holiday.factory = [](const json& j) { return std::make_unique<HolidayCondition>(ReadStringList(j, "holidays")); };
-        r.RegisterType(std::move(holiday));
+        std::vector<FieldOption> holidays{{"Any", "Any holiday"}};
+        for (const auto& h : kHolidays) holidays.push_back({std::string(h.name), std::string(h.name), {}});
+        TypeBuilder("Holiday", "Holiday", "time")
+            .Icon("🎉")
+            .Describe("Today is a Tamriel holiday")
+            .Fields({EnumList("holidays", "Holidays", std::move(holidays)).Required()})
+            .Factory([](const json& j) { return std::make_unique<HolidayCondition>(ReadStringList(j, "holidays")); })
+            .Register(r);
     }
 
 } // namespace ConditionEngine

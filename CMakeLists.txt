@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 project(
     ConditionEngine
-    VERSION 1.0.0
+    VERSION 1.1.0
     DESCRIPTION "Reusable condition/expression evaluator for Skyrim SKSE plugins."
     LANGUAGES CXX)
 
@@ -43,6 +43,7 @@ find_package(nlohmann_json CONFIG QUIET)
 ###############################################################################
 
 set(CONDITION_ENGINE_HEADERS
+    include/ConditionEngine/Availability.h
     include/ConditionEngine/AllConditions.h
     include/ConditionEngine/Common.h
     include/ConditionEngine/Condition.h
@@ -54,6 +55,7 @@ set(CONDITION_ENGINE_HEADERS
     include/ConditionEngine/Forms.h
     include/ConditionEngine/Presets.h
     include/ConditionEngine/Registry.h
+    include/ConditionEngine/Schema.h
     include/ConditionEngine/Watcher.h
     include/ConditionEngine/Conditions/ActorConditions.h
     include/ConditionEngine/Conditions/ActorStateConditions.h
@@ -81,6 +83,7 @@ set(CONDITION_ENGINE_HEADERS
 )
 
 set(CONDITION_ENGINE_SOURCES
+    src/Availability.cpp
     src/BuiltinTypes.cpp
     src/Condition.cpp
     src/EvaluationContext.cpp
@@ -88,6 +91,7 @@ set(CONDITION_ENGINE_SOURCES
     src/Forms.cpp
     src/Presets.cpp
     src/Registry.cpp
+    src/Schema.cpp
     src/Watcher.cpp
     src/Conditions/ActorConditions.cpp
     src/Conditions/ActorStateConditions.cpp

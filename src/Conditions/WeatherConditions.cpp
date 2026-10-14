@@ -51,7 +51,7 @@ namespace ConditionEngine {
         nlohmann::json json;
         json["type"] = "Weather";
         json["weatherType"] = weatherName;  // FromJson reads "weatherType" first, "weatherName" as legacy fallback
-        json["operation"] = ComparisonOpToString(operation);
+        json["operator"] = ComparisonOpToName(operation);
         return json;
     }
 

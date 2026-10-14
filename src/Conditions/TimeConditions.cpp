@@ -47,7 +47,7 @@ namespace ConditionEngine {
         json["type"] = "Time";
         json["startHour"] = startHour;
         json["endHour"] = endHour;
-        json["operation"] = ComparisonOpToString(operation);
+        json["operator"] = ComparisonOpToName(operation);
         json["isRange"] = isRange;
         return json;
     }

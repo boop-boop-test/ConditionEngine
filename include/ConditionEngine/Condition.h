@@ -54,11 +54,12 @@ namespace ConditionEngine {
         MagicEffect     = 1 << 20,
         // Cheap actor flags (sneaking, sitting, dialogue, bleedout, weapon drawn,
         // follower) - checked by the watcher's 1s change detection
+        Availability    = 1 << 22,  // Required plugin or host integration readiness changed
         ActorState      = 1 << 21,
     };
 
     // Total number of event dependency bits (for bucket iteration)
-    inline constexpr std::uint32_t kEventDependencyBitCount = 22;
+    inline constexpr std::uint32_t kEventDependencyBitCount = 23;
 
     constexpr EventDependency operator|(EventDependency a, EventDependency b) {
         return static_cast<EventDependency>(static_cast<std::uint32_t>(a) | static_cast<std::uint32_t>(b));
@@ -89,6 +90,8 @@ namespace ConditionEngine {
     public:
         virtual ~Condition() = default;
         virtual bool Evaluate(const EvaluationContext& context) const = 0;
+        // Use this at rule boundaries: an unavailable child suspends the entire expression, including NOT/OR.
+        bool EvaluateAvailable(const EvaluationContext& context) const;
         virtual std::string GetDescription() const = 0;
         virtual nlohmann::json ToJson() const = 0;
         virtual std::unique_ptr<Condition> Clone() const = 0;
@@ -117,7 +120,7 @@ namespace ConditionEngine {
         // Returns GetEventDependencies() | Polled (if forcePolled is set).
         // All callers that build event buckets should use this instead of the virtual.
         EventDependency GetEffectiveEventDependencies() const {
-            auto deps = GetEventDependencies();
+            auto deps = GetEventDependencies() | EventDependency::Availability;
             if (forcePolled) deps |= EventDependency::Polled;
             return deps;
         }
@@ -146,7 +149,9 @@ namespace ConditionEngine {
     // Comparison helpers used by condition implementations
     bool CompareFloat(float lhs, float rhs, ComparisonOperator op);
     bool CompareInt(int lhs, int rhs, ComparisonOperator op);
-    std::string ComparisonOpToString(ComparisonOperator op);
+    std::string ComparisonOpToString(ComparisonOperator op);   // "==", ">=", ...
+    // Canonical name written by ToJson: Equal, NotEqual, Greater, GreaterOrEqual, Less, LessOrEqual
+    std::string ComparisonOpToName(ComparisonOperator op);
     ComparisonOperator ParseComparisonOperator(const nlohmann::json& json, const std::string& key = "operation");
 
     // Parsing helpers shared by condition factories (built-in and host-registered).
