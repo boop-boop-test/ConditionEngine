@@ -124,6 +124,12 @@ int RunBenchmark() {
         Stats::SetEnabled(true);
         Row("Read: $bench_pushed, stats on", Time([&] { g_sink = pushedValue->ReadCounted(context).value; }));
         Stats::SetEnabled(false);
+        PushedValues::Get().SetGlobal("bench_global", 4.0);
+        auto globalValue = value("$bench_global");
+        Row("Read: $bench_global (a global pushed value)", Time([&] { g_sink = globalValue->Read(context).value; }));
+        Stats::SetEnabled(true);
+        Row("Read: $bench_global, stats on", Time([&] { g_sink = globalValue->ReadCounted(context).value; }));
+        Stats::SetEnabled(false);
         PushedValues::Get().ClearAll();
     }
     Row("Read: $bench_e (5 named values deep)", Time([&] { g_sink = named5->Read(context).value; }));
