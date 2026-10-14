@@ -424,7 +424,7 @@ namespace ConditionEngine {
         tickQueued_ = false;
         if (!IsWorldReady()) return;
 
-        if (RE::ConsoleLog::IsConsoleMode()) Stats::CountConsoleModeTick();
+        Stats::CountConsoleCheck(RE::ConsoleLog::IsConsoleMode());
         RefreshDependencies();
         const auto tickStart = Clock::now();
         struct RecordOnExit {
@@ -1050,7 +1050,20 @@ namespace ConditionEngine {
                     step = std::min(step, std::max<std::chrono::milliseconds>(std::chrono::milliseconds(shortest), kFrame));
                 }
                 std::this_thread::sleep_for(step);
-                if (watcher.GetWatchCount() == 0) continue;
+                if (watcher.GetWatchCount() == 0) {
+                    // Idle: only sample the main thread's console mode for "ce stats"
+                    if (!watcher.tickQueued_.exchange(true)) {
+                        if (auto* tasks = SKSE::GetTaskInterface()) {
+                            tasks->AddTask([]() {
+                                Stats::CountConsoleCheck(RE::ConsoleLog::IsConsoleMode());
+                                Watcher::Get().tickQueued_ = false;
+                            });
+                        } else {
+                            watcher.tickQueued_ = false;
+                        }
+                    }
+                    continue;
+                }
                 // One queued tick at a time, so a stalled main thread does not pile them up
                 if (watcher.tickQueued_.exchange(true)) continue;
                 if (auto* tasks = SKSE::GetTaskInterface()) {

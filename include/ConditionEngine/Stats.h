@@ -56,9 +56,10 @@ namespace ConditionEngine::Stats {
     void AddValueSamples(std::uint64_t count);
     void CountPostedEvent();
     void CountDrain();
-    // A watcher tick found the main thread in console mode: the engine's condition
-    // functions then print "GetInCell >> 0" to the console for every evaluation, anyone's
-    void CountConsoleModeTick();
+    // Samples the main thread's console mode about once a second (watcher ticks, or an
+    // idle check). While it is on, the game's condition functions print "GetInCell >> 0"
+    // to the console for every evaluation, anyone's.
+    void CountConsoleCheck(bool consoleMode);
     void RecordAvailabilityCheck(std::chrono::steady_clock::duration duration);
     // A named value or rule reference re-bound its definition (the availability revision moved)
     void CountRebind();

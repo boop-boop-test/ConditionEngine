@@ -225,11 +225,11 @@ namespace ConditionEngine::Console {
             Print(std::format("  ticks: {} avg {:.1f}us max {:.1f}us; {} evaluations, {} value samples",
                               w.value("ticks", 0), w.value("tickAverageUs", 0.0), w.value("tickMaxUs", 0.0),
                               w.value("conditionEvaluations", 0), w.value("valueSamples", 0)));
-            if (const auto consoleTicks = w.value("consoleModeTicks", 0); consoleTicks > 0) {
-                Print(std::format("  console mode was on in {} of {} ticks: the game's condition functions print",
-                                  consoleTicks, w.value("ticks", 0)));
-                Print("  \"GetInCell >> 0\" lines for every check (anyone's) while it is stuck on");
-            }
+            Print(std::format("  main thread in console mode: {} of {} checks{}", w.value("consoleModeChecks", 0),
+                              w.value("consoleChecks", 0),
+                              w.value("consoleModeChecks", 0) > 0
+                                  ? " - stuck on: every condition check (anyone's) prints \"GetInCell >> 0\""
+                                  : ""));
             Print(std::format("  availability: revision {}, {} checks, {} rebinds", a.value("revision", 0),
                               a.value("checks", 0), a.value("rebinds", 0)));
             Print(std::format("  papyrus calls: {} dispatched, {} completed, {} failed, {} timed out",

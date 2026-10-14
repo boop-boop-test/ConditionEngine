@@ -26,7 +26,7 @@ namespace ConditionEngine::Stats {
         std::vector<std::string> g_names{"(unregistered)", "Literal", "Math", "NamedValue", "Truth"};
 
         std::atomic<std::uint64_t> g_ticks{0}, g_tickTotalNs{0}, g_tickMaxNs{0}, g_lastTickNs{0};
-        std::atomic<std::uint64_t> g_conditionEvaluations{0}, g_valueSamples{0}, g_posted{0}, g_drains{0}, g_consoleModeTicks{0};
+        std::atomic<std::uint64_t> g_conditionEvaluations{0}, g_valueSamples{0}, g_posted{0}, g_drains{0}, g_consoleChecks{0}, g_consoleModeChecks{0};
         std::atomic<std::uint64_t> g_availabilityChecks{0}, g_availabilityNs{0}, g_rebinds{0};
         std::atomic<std::uint64_t> g_papyrus[4]{};
         std::atomic<std::int64_t> g_since{Clock::now().time_since_epoch().count()};
@@ -84,7 +84,10 @@ namespace ConditionEngine::Stats {
     void AddValueSamples(std::uint64_t count) { g_valueSamples.fetch_add(count, relaxed); }
     void CountPostedEvent() { g_posted.fetch_add(1, relaxed); }
     void CountDrain() { g_drains.fetch_add(1, relaxed); }
-    void CountConsoleModeTick() { g_consoleModeTicks.fetch_add(1, relaxed); }
+    void CountConsoleCheck(bool consoleMode) {
+        g_consoleChecks.fetch_add(1, relaxed);
+        if (consoleMode) g_consoleModeChecks.fetch_add(1, relaxed);
+    }
 
     void RecordAvailabilityCheck(Clock::duration duration) {
         g_availabilityChecks.fetch_add(1, relaxed);
@@ -118,7 +121,8 @@ namespace ConditionEngine::Stats {
               {"valueSamples", g_valueSamples.load(relaxed)},
               {"postedEvents", g_posted.load(relaxed)},
               {"drains", g_drains.load(relaxed)},
-              {"consoleModeTicks", g_consoleModeTicks.load(relaxed)},
+              {"consoleChecks", g_consoleChecks.load(relaxed)},
+              {"consoleModeChecks", g_consoleModeChecks.load(relaxed)},
               {"conditionWatches", watcher.GetWatchCount() - watcher.GetValueWatchCount()},
               {"valueWatches", watcher.GetValueWatchCount()}}},
             {"availability",
@@ -158,7 +162,7 @@ namespace ConditionEngine::Stats {
             c.selfNs.store(0, relaxed);
         }
         for (auto* a : {&g_ticks, &g_tickTotalNs, &g_tickMaxNs, &g_lastTickNs, &g_conditionEvaluations, &g_valueSamples,
-                        &g_posted, &g_drains, &g_consoleModeTicks, &g_availabilityChecks, &g_availabilityNs, &g_rebinds}) {
+                        &g_posted, &g_drains, &g_consoleChecks, &g_consoleModeChecks, &g_availabilityChecks, &g_availabilityNs, &g_rebinds}) {
             a->store(0, relaxed);
         }
         for (auto& p : g_papyrus) p.store(0, relaxed);
