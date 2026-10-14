@@ -191,6 +191,25 @@ namespace {
         if (schema.contains("fields") && schema["fields"].is_array()) {
             for (const auto& f : schema["fields"]) fields.push_back(FieldFromJson(f));
         }
+        // Field keys share the condition's JSON object with the engine's own keys
+        std::unordered_set<std::string> seen;
+        for (const auto& f : fields) {
+            std::string problem;
+            if (f.key.empty()) {
+                problem = "a field has no \"key\"";
+            } else if (f.key == "type" || f.key == "forcePolled") {
+                problem = "field key \"" + f.key + "\" is reserved by the engine (it is the condition's own JSON key)";
+            } else if ((f.key == "operator" || f.key == "operation") && f.type != FieldType::Comparison) {
+                problem = "field key \"" + f.key + "\" is reserved for the comparison operator";
+            } else if (!seen.insert(f.key).second) {
+                problem = "field key \"" + f.key + "\" is declared twice";
+            }
+            if (!problem.empty()) {
+                WriteString("type '" + name + "': " + problem, errorBuf, errorBufSize);
+                result = CE_ERR_INVALID_ARG;
+                return std::nullopt;
+            }
+        }
         builder.Fields(std::move(fields));
         return builder;
     }

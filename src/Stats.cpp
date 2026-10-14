@@ -1,4 +1,5 @@
 #include "ConditionEngine/Stats.h"
+#include "ConditionEngine/Availability.h"
 #include "ConditionEngine/Watcher.h"
 
 #include <array>
@@ -26,7 +27,7 @@ namespace ConditionEngine::Stats {
 
         std::atomic<std::uint64_t> g_ticks{0}, g_tickTotalNs{0}, g_tickMaxNs{0}, g_lastTickNs{0};
         std::atomic<std::uint64_t> g_conditionEvaluations{0}, g_valueSamples{0}, g_posted{0}, g_drains{0};
-        std::atomic<std::uint64_t> g_availabilityChecks{0}, g_availabilityNs{0};
+        std::atomic<std::uint64_t> g_availabilityChecks{0}, g_availabilityNs{0}, g_rebinds{0};
         std::atomic<std::uint64_t> g_papyrus[4]{};
         std::atomic<std::int64_t> g_since{Clock::now().time_since_epoch().count()};
 
@@ -89,6 +90,8 @@ namespace ConditionEngine::Stats {
         g_availabilityNs.fetch_add(Ns(duration), relaxed);
     }
 
+    void CountRebind() { g_rebinds.fetch_add(1, relaxed); }
+
     void CountPapyrusCall(PapyrusOutcome outcome) { g_papyrus[static_cast<int>(outcome)].fetch_add(1, relaxed); }
 
     nlohmann::json Snapshot() {
@@ -117,7 +120,10 @@ namespace ConditionEngine::Stats {
               {"conditionWatches", watcher.GetWatchCount() - watcher.GetValueWatchCount()},
               {"valueWatches", watcher.GetValueWatchCount()}}},
             {"availability",
-             {{"checks", g_availabilityChecks.load(relaxed)}, {"totalUs", us(g_availabilityNs.load(relaxed))}}},
+             {{"checks", g_availabilityChecks.load(relaxed)},
+              {"totalUs", us(g_availabilityNs.load(relaxed))},
+              {"revision", Availability::Get().Revision()},
+              {"rebinds", g_rebinds.load(relaxed)}}},
             {"papyrusCalls",
              {{"dispatched", g_papyrus[0].load(relaxed)},
               {"completed", g_papyrus[1].load(relaxed)},
@@ -150,7 +156,7 @@ namespace ConditionEngine::Stats {
             c.selfNs.store(0, relaxed);
         }
         for (auto* a : {&g_ticks, &g_tickTotalNs, &g_tickMaxNs, &g_lastTickNs, &g_conditionEvaluations, &g_valueSamples,
-                        &g_posted, &g_drains, &g_availabilityChecks, &g_availabilityNs}) {
+                        &g_posted, &g_drains, &g_availabilityChecks, &g_availabilityNs, &g_rebinds}) {
             a->store(0, relaxed);
         }
         for (auto& p : g_papyrus) p.store(0, relaxed);

@@ -57,6 +57,8 @@ namespace ConditionEngine::Stats {
     void CountPostedEvent();
     void CountDrain();
     void RecordAvailabilityCheck(std::chrono::steady_clock::duration duration);
+    // A named value or rule reference re-bound its definition (the availability revision moved)
+    void CountRebind();
     enum class PapyrusOutcome { Dispatched, Completed, Failed, TimedOut };
     void CountPapyrusCall(PapyrusOutcome outcome);
 

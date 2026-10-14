@@ -339,6 +339,7 @@ namespace ConditionEngine {
             auto& registry = Registry::Get();
             bound_ = std::make_shared<const Binding>(Binding{registry.FindNamedValue(key_), registry.ProvidersOf(key_)});
             boundRevision_ = revision;
+            Stats::CountRebind();
         }
         return bound_;
     }

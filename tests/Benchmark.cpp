@@ -7,6 +7,7 @@
 #include "ConditionEngine/Expression.h"
 #include "ConditionEngine/Stats.h"
 #include "ConditionEngine/Value.h"
+#include "ConditionEngine/Values/PushedValues.h"
 
 #include <chrono>
 #include <cstdio>
@@ -115,6 +116,16 @@ int RunBenchmark() {
     Row("Read: 2 + 3 * 4 (literals)", Time([&] { g_sink = literal->Read(context).value; }));
     Row("Read: BenchNum(1) (type read)", Time([&] { g_sink = typeRead->Read(context).value; }));
     Row("Read: $bench_a (1 named value)", Time([&] { g_sink = named1->Read(context).value; }));
+    {
+        // A pushed value, as NTJH's stress scene reads it
+        PushedValues::Get().Set(nullptr, "bench_pushed", 3.0);
+        auto pushedValue = value("$bench_pushed");
+        Row("Read: $bench_pushed (a pushed value)", Time([&] { g_sink = pushedValue->Read(context).value; }));
+        Stats::SetEnabled(true);
+        Row("Read: $bench_pushed, stats on", Time([&] { g_sink = pushedValue->ReadCounted(context).value; }));
+        Stats::SetEnabled(false);
+        PushedValues::Get().ClearAll();
+    }
     Row("Read: $bench_e (5 named values deep)", Time([&] { g_sink = named5->Read(context).value; }));
     Row("ReadValueAvailable: $bench_e", Time([&] { g_sink = ReadValueAvailable(*named5, context).value; }));
     Row("Availability::CheckValue alone: $bench_e", Time([&] { g_sink = Availability::Get().CheckValue(*named5).Ready(); }));

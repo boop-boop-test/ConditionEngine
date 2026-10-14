@@ -151,6 +151,9 @@ CONDITIONENGINE_API CE_Result ConditionEngine_AddNamedResolver(CE_NamedLookupFn 
 /// Field types: int, float, string, bool, enum, enumList, form, formList, stringList,
 /// intList, comparison, namedCondition, custom, value (see ConditionEngine/Schema.h).
 /// A missing "source" uses the calling module's file name (and logs a warning).
+/// Field keys "type" and "forcePolled" are reserved (they are the condition's own JSON keys),
+/// and "operator" / "operation" only for a comparison field: such schemas are refused with
+/// CE_ERR_INVALID_ARG, as are duplicate keys.
 CONDITIONENGINE_API CE_Result ConditionEngine_RegisterType(const char* schemaJson, CE_CustomEvalFn fn, void* userData,
                                                            uint32_t dependencies, char* errorBuf,
                                                            uint32_t errorBufSize);
@@ -378,13 +381,15 @@ CONDITIONENGINE_API int32_t ConditionEngine_RefreshValueWatch(CE_WatchHandle wat
 ///    "watcher": {"ticks", "tickTotalUs", "tickAverageUs", "tickMaxUs", "lastTickUs",
 ///                "conditionEvaluations", "valueSamples", "postedEvents", "drains",
 ///                "conditionWatches", "valueWatches"},
-///    "availability": {"checks", "totalUs"},
+///    "availability": {"checks", "totalUs", "revision", "rebinds"},
 ///    "papyrusCalls": {"dispatched", "completed", "failed", "timedOut"},
 ///    "types": [{"name", "evaluations", "reads", "totalUs", "selfUs"}]}
 /// watcher / availability / papyrusCalls are always counted. "types" (per condition type
 /// and value node: Literal, Math, NamedValue, Truth) is filled only while enabled, as it
 /// times every node: totalUs includes nested nodes, selfUs does not. Only types with
-/// activity are listed. Counts run since the last ResetStats ("sinceMs").
+/// activity are listed. Counts run since the last ResetStats ("sinceMs"). "revision" is the
+/// current availability revision; "rebinds" counts $name / @rule re-binding after it moved:
+/// a revision that keeps moving makes every read re-bind.
 CONDITIONENGINE_API uint32_t ConditionEngine_GetStats(char* buf, uint32_t bufSize);
 CONDITIONENGINE_API void ConditionEngine_ResetStats(void);
 /// Per-type timing on (non-zero) or off (default off).

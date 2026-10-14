@@ -2,6 +2,7 @@
 #include "ConditionEngine/EvaluationContext.h"
 #include "ConditionEngine/Availability.h"
 #include "ConditionEngine/Registry.h"
+#include "ConditionEngine/Stats.h"
 
 namespace ConditionEngine {
 
@@ -26,6 +27,7 @@ namespace ConditionEngine {
             std::lock_guard lock(bindMutex_);
             bound_ = named;
             boundRevision_ = revision;
+            Stats::CountRebind();
         }
         return named;
     }
