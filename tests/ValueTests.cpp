@@ -716,6 +716,9 @@ void RunValueTests(CheckFn check) {
     }
 
     // ── Explain ──────────────────────────────────────────────────────────────
+    Check(Explain::FormatNumber(8.290821075439453) == "8.29" && Explain::FormatNumber(42) == "42" &&
+              Explain::FormatNumber(0.5) == "0.5" && Explain::FormatNumber(-0.001) == "0",
+          "explanations round numbers to 2 decimals");
     {
         std::string error;
         EvaluationContext context(nullptr);

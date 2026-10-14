@@ -7,6 +7,7 @@
 #include "ConditionEngine/Registry.h"
 #include "ConditionEngine/Values/ValueNodes.h"
 
+#include <cmath>
 #include <format>
 
 namespace ConditionEngine::Explain {
@@ -166,7 +167,7 @@ namespace ConditionEngine::Explain {
             if (node.contains("role")) out += node["role"].get<std::string>() + ": ";
             out += node.value("expression", "");
             if (node.contains("value") && node["value"].is_number()) {
-                out += std::format(" = {}", node["value"].get<double>());
+                out += " = " + FormatNumber(node["value"].get<double>());
                 if (node.contains("unit")) out += node["unit"].get<std::string>();
             }
             if (node.contains("from")) out += "  (from " + node["from"].get<std::string>() + ")";
@@ -198,6 +199,14 @@ namespace ConditionEngine::Explain {
             node["reason"] = "suspended: " + availability.reason;
         }
         return node;
+    }
+
+    std::string FormatNumber(double value) {
+        if (!std::isfinite(value)) return std::format("{}", value);
+        auto text = std::format("{:.2f}", value);
+        while (text.back() == '0') text.pop_back();
+        if (text.back() == '.') text.pop_back();
+        return text == "-0" ? "0" : text;
     }
 
     std::string ToText(const json& explanation) {

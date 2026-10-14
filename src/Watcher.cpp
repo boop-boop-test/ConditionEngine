@@ -424,6 +424,7 @@ namespace ConditionEngine {
         tickQueued_ = false;
         if (!IsWorldReady()) return;
 
+        if (RE::ConsoleLog::IsConsoleMode()) Stats::CountConsoleModeTick();
         RefreshDependencies();
         const auto tickStart = Clock::now();
         struct RecordOnExit {

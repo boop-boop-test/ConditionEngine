@@ -31,4 +31,7 @@ namespace ConditionEngine::Explain {
     //     [ok] $hunger = 42  (from severactions_hunger)
     std::string ToText(const nlohmann::json& explanation);
 
+    // Whole numbers as is, others to 2 decimals without trailing zeros: 8.29, 0.5, 42
+    std::string FormatNumber(double value);
+
 } // namespace ConditionEngine::Explain
