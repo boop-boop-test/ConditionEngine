@@ -14,6 +14,7 @@ namespace ConditionEngine {
         QuestStageCondition(const std::string& questName, int stage, ComparisonOperator op);
         
         bool Evaluate(const EvaluationContext& context) const override;
+        ValueResult ReadValue(const EvaluationContext& context) const override;
         std::string GetDescription() const override;
         nlohmann::json ToJson() const override;
         std::unique_ptr<Condition> Clone() const override;

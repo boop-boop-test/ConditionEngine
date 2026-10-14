@@ -13,6 +13,8 @@ namespace ConditionEngine {
         FactionCondition(const std::string& factionName, int rank = 0, ComparisonOperator op = ComparisonOperator::GreaterEqual);
         
         bool Evaluate(const EvaluationContext& context) const override;
+        ValueResult ReadValue(const EvaluationContext& context) const override;
+        RE::TESFaction* ResolveFaction() const;
         std::string GetDescription() const override;
         nlohmann::json ToJson() const override;
         std::unique_ptr<Condition> Clone() const override;

@@ -68,6 +68,8 @@ namespace {
     }
 }
 
+void RunValueTests(void (*check)(bool ok, const std::string& what));  // ValueTests.cpp
+
 int main(int argc, char** argv) {
     // --dump-catalog <file> / --dump-schema <file>: write generated JSON and exit
     for (int i = 1; i + 1 < argc; i += 2) {
@@ -318,6 +320,8 @@ int main(int argc, char** argv) {
         registry.UnregisterNamed("AvailabilityNamed");
         registry.UnregisterNamed("AvailabilityCycle");
     }
+
+    RunValueTests(&Check);
 
     std::printf("%d/%d checks passed\n", g_checks - g_failures, g_checks);
     return g_failures == 0 ? 0 : 1;

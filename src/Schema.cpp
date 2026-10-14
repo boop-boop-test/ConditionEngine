@@ -29,12 +29,14 @@ namespace ConditionEngine {
             {FieldType::NamedCondition, "namedCondition"},
             {FieldType::Conditions, "conditions"},
             {FieldType::Custom, "custom"},
+            {FieldType::Value, "value"},
         };
 
         constexpr const char* kDependencyNames[kEventDependencyBitCount] = {
             "Time",       "Date",           "Weather",  "Location", "Combat",    "Equipment",   "Faction",  "Quest",
             "ActorValue", "GlobalVariable", "Script",   "Temperature", "Swimming", "Sleeping", "Mounting", "InWater",
             "LoveScene",  "Polled",         "Host",     "Inventory",   "MagicEffect", "ActorState", "Availability",
+            "Value",
         };
 
         // ${param} references are valid wherever a value is
@@ -89,6 +91,9 @@ namespace ConditionEngine {
         FieldSchema Children(std::string key, std::string label) {
             return Make(std::move(key), std::move(label), FieldType::Conditions);
         }
+        FieldSchema ValueExpr(std::string key, std::string label) {
+            return Make(std::move(key), std::move(label), FieldType::Value);
+        }
         FieldSchema Widget(std::string key, std::string label, std::string widget) {
             auto f = Make(std::move(key), std::move(label), FieldType::Custom);
             f.widget = std::move(widget);
@@ -99,6 +104,14 @@ namespace ConditionEngine {
             for (auto v : values) result.push_back({std::string(v), std::string(v), {}});
             return result;
         }
+    }
+
+    json CategoryInfo::ToJson() const {
+        json j{{"id", id}, {"label", label}, {"order", order}, {"source", source}};
+        if (!parent.empty()) j["parent"] = parent;
+        if (!icon.empty()) j["icon"] = icon;
+        if (!description.empty()) j["description"] = description;
+        return j;
     }
 
     const char* FieldTypeName(FieldType type) {
@@ -222,6 +235,10 @@ namespace ConditionEngine {
                 break;
             case FieldType::Custom:
                 schema = json::object();  // host-defined
+                break;
+            case FieldType::Value:
+                // A number, ${param}, or a value node ({"type": "Math" | "NamedValue" | "Truth" | <numeric type>})
+                schema = json{{"anyOf", json::array({json{{"type", "number"}}, kParamRef, json{{"type", "object"}}})}};
                 break;
             default:
                 schema = json{{"type", "string"}};

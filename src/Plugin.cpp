@@ -5,8 +5,10 @@
 
 #include "ConditionEngine/Presets.h"
 #include "ConditionEngine/Availability.h"
+#include "ConditionEngine/Conditions/PapyrusCallCondition.h"
 #include "ConditionEngine/Registry.h"
 #include "ConditionEngine/Settings.h"
+#include "ConditionEngine/Values/PushedValues.h"
 #include "ConditionEngine/Watcher.h"
 
 #include <spdlog/sinks/basic_file_sink.h>
@@ -33,7 +35,7 @@ namespace {
                 ConditionEngine::ApplyTemperatureSettings(settings);
 
                 auto count = ConditionEngine::LoadPresetDirectory(ConditionEngine::GetDefaultPresetDirectory());
-                SKSE::log::info("Loaded {} named condition presets", count);
+                SKSE::log::info("Loaded {} named conditions and values from presets", count);
 
                 auto& watcher = ConditionEngine::Watcher::Get();
                 watcher.SetPollInterval(settings.pollInterval);
@@ -44,6 +46,9 @@ namespace {
             case SKSE::MessagingInterface::kNewGame:
                 ConditionEngine::Availability::Get().RefreshLoadedPlugins();
                 ConditionEngine::Papyrus::ClearScriptState();
+                ConditionEngine::PushedValues::Get().ClearAll();  // pushed values are never saved
+                ConditionEngine::PapyrusCalls::Get().ClearAll();
+                ConditionEngine::Watcher::Get().OnGameLoad();
                 break;
             case SKSE::MessagingInterface::kPostLoadGame:
                 ConditionEngine::Availability::Get().RefreshLoadedPlugins();

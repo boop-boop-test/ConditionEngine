@@ -14,6 +14,7 @@ namespace ConditionEngine {
         LogicalCondition(LogicalOperator op, std::vector<std::unique_ptr<Condition>> children);
         
         bool Evaluate(const EvaluationContext& context) const override;
+        TriResult EvaluateTri(const EvaluationContext& context) const override;
         std::string GetDescription() const override;
         nlohmann::json ToJson() const override;
         std::unique_ptr<Condition> Clone() const override;

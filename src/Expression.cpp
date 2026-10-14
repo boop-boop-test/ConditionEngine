@@ -1,5 +1,6 @@
 #include "ConditionEngine/Expression.h"
 #include "ConditionEngine/Registry.h"
+#include "ConditionEngine/Values/ValueNodes.h"
 
 #include <cctype>
 #include <charconv>
@@ -16,6 +17,8 @@ namespace ConditionEngine::Expression {
             LParen, RParen, LBracket, RBracket, Comma, Assign, At,
             Not, And, Or,
             Eq, Ne, Lt, Le, Gt, Ge,
+            Plus, Minus, Star, Slash,
+            Var,                   // $name (text = name)
         };
 
         struct Token {
@@ -65,14 +68,24 @@ namespace ConditionEngine::Expression {
                     continue;
                 }
 
+                // Signs are separate tokens (binary/unary minus); ParseValue folds them into literals
                 if (std::isdigit(static_cast<unsigned char>(c)) ||
-                    ((c == '-' || c == '+' || c == '.') && std::isdigit(static_cast<unsigned char>(peek(1))))) {
+                    (c == '.' && std::isdigit(static_cast<unsigned char>(peek(1))))) {
                     ++i;
                     if (c == '0' && (peek(0) == 'x' || peek(0) == 'X')) {
                         ++i;
                         while (i < src.size() && std::isxdigit(static_cast<unsigned char>(src[i]))) ++i;
                     } else {
                         while (i < src.size() && (std::isdigit(static_cast<unsigned char>(src[i])) || src[i] == '.')) ++i;
+                        // Exponent (the printer writes 1e-07 for tiny numbers)
+                        if (i < src.size() && (src[i] == 'e' || src[i] == 'E')) {
+                            std::size_t j = i + 1;
+                            if (j < src.size() && (src[j] == '+' || src[j] == '-')) ++j;
+                            if (j < src.size() && std::isdigit(static_cast<unsigned char>(src[j]))) {
+                                i = j;
+                                while (i < src.size() && std::isdigit(static_cast<unsigned char>(src[i]))) ++i;
+                            }
+                        }
                     }
                     push(Tok::Number, start, std::string(src.substr(start, i - start)));
                     continue;
@@ -110,6 +123,15 @@ namespace ConditionEngine::Expression {
                     continue;
                 }
 
+                if (c == '$') {
+                    if (!IsIdentStart(peek(1))) throw SyntaxError{"Expected a value name after '$'", start};
+                    i += 1;
+                    const std::size_t nameStart = i;
+                    while (i < src.size() && IsIdentChar(src[i])) ++i;
+                    push(Tok::Var, start, std::string(src.substr(nameStart, i - nameStart)));
+                    continue;
+                }
+
                 auto two = [&](char a, char b) { return c == a && peek(1) == b; };
                 if (two('&', '&')) { push(Tok::And, start); i += 2; continue; }
                 if (two('|', '|')) { push(Tok::Or, start); i += 2; continue; }
@@ -129,6 +151,10 @@ namespace ConditionEngine::Expression {
                     case '!': push(Tok::Not, start); break;
                     case '<': push(Tok::Lt, start); break;
                     case '>': push(Tok::Gt, start); break;
+                    case '+': push(Tok::Plus, start); break;
+                    case '-': push(Tok::Minus, start); break;
+                    case '*': push(Tok::Star, start); break;
+                    case '/': push(Tok::Slash, start); break;
                     default:
                         throw SyntaxError{std::string("Unexpected character '") + c + "'", start};
                 }
@@ -140,18 +166,40 @@ namespace ConditionEngine::Expression {
 
         // ── Parser ───────────────────────────────────────────────────────────
 
+        // A parsed operand. Calls stay undecided until their use: a numeric type read as a
+        // number (value) or as its own condition.
+        enum class Kind { Condition, Value, Call };
+
+        struct Node {
+            json j;
+            Kind kind = Kind::Condition;
+            const TypeInfo* info = nullptr;  // Call
+        };
+
+        constexpr const char* kFunctions[] = {"min", "max", "clamp", "abs", "lerp"};
+
+        bool IsFunctionName(std::string_view name) {
+            return std::any_of(std::begin(kFunctions), std::end(kFunctions), [&](const char* f) { return IEquals(name, f); });
+        }
+
+        json MakeCompare(json left, const char* op, json right) {
+            return json{{"type", "Compare"}, {"left", std::move(left)}, {"operator", op}, {"right", std::move(right)}};
+        }
+
         class Parser {
         public:
             explicit Parser(std::vector<Token> tokens) : tokens_(std::move(tokens)) {}
 
-            json ParseAll() {
-                json result = ParseOr();
+            json ParseAll(bool valueMode) {
+                Node result = ParseOr();
                 if (Peek().type != Tok::End) throw SyntaxError{"Unexpected input", Peek().pos};
-                return result;
+                return valueMode ? AsValue(std::move(result)) : AsCondition(std::move(result));
             }
 
         private:
-            const Token& Peek() const { return tokens_[index_]; }
+            const Token& Peek(std::size_t ahead = 0) const {
+                return tokens_[std::min(index_ + ahead, tokens_.size() - 1)];
+            }
             const Token& Next() { return tokens_[index_++]; }
             bool Accept(Tok t) {
                 if (Peek().type != t) return false;
@@ -163,60 +211,222 @@ namespace ConditionEngine::Expression {
                 return Next();
             }
 
+            // A value used as a condition is true when non-zero
+            static json AsCondition(Node node) {
+                if (node.kind != Kind::Value) return std::move(node.j);
+                return MakeCompare(std::move(node.j), "!=", 0);
+            }
+
+            // A condition used as a value reads 0 / 1; numeric calls read their number
+            static json AsValue(Node node) {
+                if (node.kind == Kind::Value) return std::move(node.j);
+                if (node.kind == Kind::Call && node.info && node.info->value) return std::move(node.j);
+                return json{{"type", "Truth"}, {"condition", std::move(node.j)}};
+            }
+
+            static Node ConditionNode(json j) { return Node{std::move(j), Kind::Condition, nullptr}; }
+            static Node ValueNode(json j) { return Node{std::move(j), Kind::Value, nullptr}; }
+
             static json Combine(const char* op, std::vector<json> children) {
                 if (children.size() == 1) return std::move(children.front());
                 return json{{"type", "Logical"}, {"operator", op}, {"children", std::move(children)}};
             }
 
-            json ParseOr() {
-                std::vector<json> children{ParseAnd()};
-                while (Accept(Tok::Or)) children.push_back(ParseAnd());
-                return Combine("Or", std::move(children));
+            Node ParseOr() {
+                Node first = ParseAnd();
+                if (Peek().type != Tok::Or) return first;
+                std::vector<json> children{AsCondition(std::move(first))};
+                while (Accept(Tok::Or)) children.push_back(AsCondition(ParseAnd()));
+                return ConditionNode(Combine("Or", std::move(children)));
             }
 
-            json ParseAnd() {
-                std::vector<json> children{ParseNot()};
-                while (Accept(Tok::And)) children.push_back(ParseNot());
-                return Combine("And", std::move(children));
+            Node ParseAnd() {
+                Node first = ParseNot();
+                if (Peek().type != Tok::And) return first;
+                std::vector<json> children{AsCondition(std::move(first))};
+                while (Accept(Tok::And)) children.push_back(AsCondition(ParseNot()));
+                return ConditionNode(Combine("And", std::move(children)));
             }
 
-            json ParseNot() {
+            Node ParseNot() {
                 if (Accept(Tok::Not)) {
-                    return json{{"type", "Logical"}, {"operator", "Not"}, {"children", json::array({ParseNot()})}};
+                    return ConditionNode(
+                        json{{"type", "Logical"}, {"operator", "Not"}, {"children", json::array({AsCondition(ParseNot())})}});
                 }
-                return ParsePrimary();
+                return ParseComparison();
             }
 
-            json ParsePrimary() {
+            static const char* ComparisonSymbol(Tok t) {
+                switch (t) {
+                    case Tok::Eq: return "==";
+                    case Tok::Ne: return "!=";
+                    case Tok::Lt: return "<";
+                    case Tok::Le: return "<=";
+                    case Tok::Gt: return ">";
+                    case Tok::Ge: return ">=";
+                    default: return nullptr;
+                }
+            }
+
+            static bool IsArithmetic(Tok t) {
+                return t == Tok::Plus || t == Tok::Minus || t == Tok::Star || t == Tok::Slash;
+            }
+
+            // True when the tokens after a comparison are one plain literal, so the
+            // classic `Type(...) op literal` form applies
+            bool LiteralAhead() const {
+                std::size_t after = 1;
                 const Token& tok = Peek();
-                if (Accept(Tok::LParen)) {
-                    json inner = ParseOr();
-                    Expect(Tok::RParen, "')'");
-                    return inner;
+                switch (tok.type) {
+                    case Tok::Number:
+                    case Tok::String:
+                    case Tok::Param:
+                        break;
+                    case Tok::LBracket:
+                        return true;
+                    case Tok::Minus:
+                    case Tok::Plus:
+                        if (Peek(1).type != Tok::Number) return false;
+                        after = 2;
+                        break;
+                    case Tok::Ident:
+                        if (IEquals(tok.text, "true") || IEquals(tok.text, "false")) break;
+                        // A type or function is a value expression; any other word is a literal
+                        if (Peek(1).type == Tok::LParen || Registry::Get().FindType(tok.text)) return false;
+                        break;
+                    default:
+                        return false;
                 }
-                if (Accept(Tok::At)) {
-                    const Token& name = Next();
-                    if (name.type != Tok::Ident && name.type != Tok::String) {
-                        throw SyntaxError{"Expected a name after '@'", name.pos};
-                    }
-                    return json{{"type", "Rule"}, {"ruleName", name.text}};
-                }
-                if (tok.type == Tok::Ident) {
-                    if (IEquals(tok.text, "true") || IEquals(tok.text, "false")) {
-                        Next();
-                        return json{{"type", "Constant"}, {"value", IEquals(tok.text, "true")}};
-                    }
-                    return ParseCall();
-                }
-                throw SyntaxError{"Expected a condition", tok.pos};
+                return !IsArithmetic(Peek(after).type);
             }
 
-            json ParseCall() {
+            Node ParseComparison() {
+                Node left = ParseAdditive();
+                const char* op = ComparisonSymbol(Peek().type);
+                if (!op) return left;
+                const std::size_t opPos = Next().pos;
+
+                if (left.kind == Kind::Call) {
+                    const TypeInfo* info = left.info;
+                    if (!info->compareField.empty() && LiteralAhead()) {
+                        json result = std::move(left.j);
+                        result[info->compareField] = ParseValue();
+                        result.erase("operation");
+                        result["operator"] = op;
+                        return ConditionNode(std::move(result));
+                    }
+                    if (!info->value) {
+                        throw SyntaxError{info->name + (info->compareField.empty()
+                                                            ? " does not support comparisons"
+                                                            : " can only be compared with a literal"),
+                                          opPos};
+                    }
+                }
+                Node right = ParseAdditive();
+                return ConditionNode(MakeCompare(AsValue(std::move(left)), op, AsValue(std::move(right))));
+            }
+
+            static Node Math(const char* op, std::vector<json> args) {
+                return ValueNode(json{{"type", "Math"}, {"operator", op}, {"args", std::move(args)}});
+            }
+
+            Node ParseAdditive() {
+                Node left = ParseTerm();
+                while (Peek().type == Tok::Plus || Peek().type == Tok::Minus) {
+                    const char* op = Next().type == Tok::Plus ? "+" : "-";
+                    Node right = ParseTerm();
+                    left = Math(op, {AsValue(std::move(left)), AsValue(std::move(right))});
+                }
+                return left;
+            }
+
+            Node ParseTerm() {
+                Node left = ParseUnary();
+                while (Peek().type == Tok::Star || Peek().type == Tok::Slash) {
+                    const char* op = Next().type == Tok::Star ? "*" : "/";
+                    Node right = ParseUnary();
+                    left = Math(op, {AsValue(std::move(left)), AsValue(std::move(right))});
+                }
+                return left;
+            }
+
+            Node ParseUnary() {
+                if (Accept(Tok::Plus)) return ParseUnary();
+                if (Accept(Tok::Minus)) {
+                    Node operand = ParseUnary();
+                    json value = AsValue(std::move(operand));
+                    if (value.is_number_integer()) return ValueNode(-value.get<std::int64_t>());
+                    if (value.is_number()) return ValueNode(-value.get<double>());
+                    return Math("neg", {std::move(value)});
+                }
+                return ParseAtom();
+            }
+
+            Node ParseAtom() {
+                const Token& tok = Peek();
+                switch (tok.type) {
+                    case Tok::LParen: {
+                        Next();
+                        Node inner = ParseOr();
+                        Expect(Tok::RParen, "')'");
+                        return inner;
+                    }
+                    case Tok::Number:
+                    case Tok::Param:  // ${param} becomes a number once substituted
+                        return ValueNode(ParseValue());
+                    case Tok::Var:
+                        Next();
+                        return ValueNode(json{{"type", "NamedValue"}, {"name", tok.text}});
+                    case Tok::At: {
+                        Next();
+                        const Token& name = Next();
+                        if (name.type != Tok::Ident && name.type != Tok::String) {
+                            throw SyntaxError{"Expected a name after '@'", name.pos};
+                        }
+                        return ConditionNode(json{{"type", "Rule"}, {"ruleName", name.text}});
+                    }
+                    case Tok::Ident: {
+                        if (IEquals(tok.text, "true") || IEquals(tok.text, "false")) {
+                            Next();
+                            return ConditionNode(json{{"type", "Constant"}, {"value", IEquals(tok.text, "true")}});
+                        }
+                        if (Peek(1).type == Tok::LParen && IsFunctionName(tok.text) && !Registry::Get().FindType(tok.text)) {
+                            return ParseFunction();
+                        }
+                        return ParseCall();
+                    }
+                    default:
+                        throw SyntaxError{"Expected a condition or value", tok.pos};
+                }
+            }
+
+            Node ParseFunction() {
+                const Token& nameTok = Next();
+                std::string name = nameTok.text;
+                std::transform(name.begin(), name.end(), name.begin(),
+                               [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                Expect(Tok::LParen, "'('");
+                std::vector<json> args;
+                if (!Accept(Tok::RParen)) {
+                    do { args.push_back(AsValue(ParseOr())); } while (Accept(Tok::Comma));
+                    Expect(Tok::RParen, "')' or ','");
+                }
+                const auto op = MathValue::ParseOp(name);
+                const auto arity = op ? MathValue::Arity(*op) : std::optional<std::size_t>{};
+                if (arity ? args.size() != *arity : args.size() < 2) {
+                    throw SyntaxError{name + " takes " + (arity ? std::to_string(*arity) : std::string("two or more")) +
+                                          " argument(s)",
+                                      nameTok.pos};
+                }
+                return Math(MathValue::OpName(*op), std::move(args));
+            }
+
+            Node ParseCall() {
                 const Token& nameTok = Next();
                 const TypeInfo* info = Registry::Get().FindType(nameTok.text);
                 if (!info) {
-                    throw SyntaxError{"Unknown condition type '" + nameTok.text +
-                                          "' (use @" + nameTok.text + " for a named condition)",
+                    throw SyntaxError{"Unknown condition type '" + nameTok.text + "' (use @" + nameTok.text +
+                                          " for a named condition or $" + nameTok.text + " for a named value)",
                                       nameTok.pos};
                 }
 
@@ -227,7 +437,7 @@ namespace ConditionEngine::Expression {
                     if (!Accept(Tok::RParen)) {
                         do {
                             // field=value
-                            if (Peek().type == Tok::Ident && tokens_[index_ + 1].type == Tok::Assign) {
+                            if (Peek().type == Tok::Ident && Peek(1).type == Tok::Assign) {
                                 std::string field = Next().text;
                                 Next();
                                 result[field] = ParseValue();
@@ -245,24 +455,10 @@ namespace ConditionEngine::Expression {
                         Expect(Tok::RParen, "')' or ','");
                     }
                 }
-
-                // Optional trailing comparison
-                static const std::unordered_map<Tok, const char*> kOps = {
-                    {Tok::Eq, "=="}, {Tok::Ne, "!="}, {Tok::Lt, "<"}, {Tok::Le, "<="}, {Tok::Gt, ">"}, {Tok::Ge, ">="},
-                };
-                auto opIt = kOps.find(Peek().type);
-                if (opIt != kOps.end()) {
-                    const std::size_t opPos = Next().pos;
-                    if (info->compareField.empty()) {
-                        throw SyntaxError{info->name + " does not support comparisons", opPos};
-                    }
-                    result[info->compareField] = ParseValue();
-                    result.erase("operation");
-                    result["operator"] = opIt->second;
-                }
-                return result;
+                return Node{std::move(result), Kind::Call, info};
             }
 
+            // A literal: number (optionally signed), string, word, list or ${param}
             json ParseValue() {
                 const Token& tok = Next();
                 switch (tok.type) {
@@ -273,13 +469,20 @@ namespace ConditionEngine::Expression {
                         if (IEquals(tok.text, "true")) return true;
                         if (IEquals(tok.text, "false")) return false;
                         return tok.text;
+                    case Tok::Minus:
+                    case Tok::Plus: {
+                        if (Peek().type != Tok::Number) throw SyntaxError{"Expected a number", Peek().pos};
+                        json number = ParseValue();
+                        if (tok.type == Tok::Plus) return number;
+                        return number.is_number_integer() ? json(-number.get<std::int64_t>()) : json(-number.get<double>());
+                    }
                     case Tok::Number: {
                         const std::string& t = tok.text;
                         try {
                             if (t.size() > 2 && t[0] == '0' && (t[1] == 'x' || t[1] == 'X')) {
                                 return static_cast<std::int64_t>(std::stoll(t, nullptr, 16));
                             }
-                            if (t.find('.') != std::string::npos) return std::stod(t);
+                            if (t.find_first_of(".eE") != std::string::npos) return std::stod(t);
                             return static_cast<std::int64_t>(std::stoll(t));
                         } catch (...) {
                             throw SyntaxError{"Invalid number '" + t + "'", tok.pos};
@@ -373,6 +576,7 @@ namespace ConditionEngine::Expression {
         }
 
         std::string Print(const json& j);
+        std::string PrintValueNode(const json& v, int precedence);
 
         std::string PrintChild(const json& child, const std::string& parentOp) {
             std::string text = Print(child);
@@ -408,6 +612,12 @@ namespace ConditionEngine::Expression {
             }
 
             if (type == "Constant") return j.value("value", true) ? "true" : "false";
+
+            if (type == "Compare") {
+                const auto op = ParseComparisonOperator(j, "operator");
+                return PrintValueNode(j.value("left", json()), 1) + " " + ComparisonOpToString(op) + " " +
+                       PrintValueNode(j.value("right", json()), 1);
+            }
 
             if (type == "Rule") {
                 const std::string name = j.value("ruleName", "");
@@ -474,10 +684,72 @@ namespace ConditionEngine::Expression {
         }
     }
 
+    namespace {
+        // True when the condition prints as one call with no operators, so it can sit
+        // inside arithmetic without parentheses
+        bool PrintsAtomically(const json& j) {
+            if (!j.is_object() || !j.contains("type") || !j["type"].is_string()) return true;
+            const auto* info = Registry::Get().FindType(j["type"].get<std::string>());
+            const std::string type = info ? info->name : j["type"].get<std::string>();
+            if (type == "Logical" || type == "Compare") return false;
+            if (type == "Rule") return !j.value("inverted", false);
+            if (info && !info->compareField.empty() && j.contains(info->compareField) &&
+                (j.contains("operator") || j.contains("operation"))) {
+                return false;
+            }
+            return true;
+        }
+
+        // precedence: 0 = anywhere, 1 = additive / comparison operand, 2 = multiplicative,
+        // 3 = unary operand
+        std::string PrintValueNode(const json& v, int precedence) {
+            if (v.is_number() || v.is_boolean()) return PrintValue(v);
+            if (v.is_string()) return PrintValue(v);
+            if (!v.is_object() || !v.contains("type") || !v["type"].is_string()) return "0";
+
+            const std::string type = v["type"].get<std::string>();
+            if (IEquals(type, "NamedValue")) return "$" + v.value("name", std::string());
+
+            if (IEquals(type, "Truth")) {
+                const json condition = v.value("condition", json());
+                std::string text = Print(condition);
+                return precedence >= 1 && !PrintsAtomically(condition) ? "(" + text + ")" : text;
+            }
+
+            if (IEquals(type, "Math")) {
+                const std::string op = v.value("operator", "");
+                const json args = v.value("args", json::array());
+                auto arg = [&](std::size_t i, int p) { return i < args.size() ? PrintValueNode(args[i], p) : "0"; };
+                int own = 0;
+                std::string text;
+                if (op == "+" || op == "-" || op == "*" || op == "/") {
+                    own = (op == "+" || op == "-") ? 1 : 2;
+                    // Left-associative: an equal-precedence right operand keeps its parentheses
+                    text = arg(0, own) + " " + op + " " + arg(1, own + 1);
+                } else if (IEquals(op, "neg")) {
+                    own = 3;
+                    text = "-" + arg(0, 3);
+                } else {
+                    text = op + "(";
+                    for (std::size_t i = 0; i < args.size(); ++i) {
+                        if (i > 0) text += ", ";
+                        text += PrintValueNode(args[i], 0);
+                    }
+                    return text + ")";
+                }
+                return own < precedence ? "(" + text + ")" : text;
+            }
+
+            // A numeric type read as its number
+            std::string text = Print(v);
+            return precedence >= 1 && !PrintsAtomically(v) ? "(" + text + ")" : text;
+        }
+    }
+
     std::optional<nlohmann::json> ParseToJson(std::string_view source, ParseError* error) {
         try {
             Parser parser(Lex(source));
-            return parser.ParseAll();
+            return parser.ParseAll(false);
         } catch (const SyntaxError& e) {
             if (error) *error = ParseError{e.message, e.pos};
             return std::nullopt;
@@ -519,6 +791,68 @@ namespace ConditionEngine::Expression {
 
     std::string ToExpression(const Condition& condition) {
         return Print(condition.ToJsonComplete());
+    }
+
+    // ── Values ──────────────────────────────────────────────────────────────
+
+    std::optional<nlohmann::json> ParseValueToJson(std::string_view source, ParseError* error) {
+        try {
+            Parser parser(Lex(source));
+            return parser.ParseAll(true);
+        } catch (const SyntaxError& e) {
+            if (error) *error = ParseError{e.message, e.pos};
+            return std::nullopt;
+        }
+    }
+
+    std::unique_ptr<Value> CompileValue(std::string_view source, ParseError* error) {
+        auto tree = ParseValueToJson(source, error);
+        if (!tree) return nullptr;
+        std::string buildError;
+        auto value = Value::FromJson(*tree, &buildError);
+        if (!value && error) *error = ParseError{buildError.empty() ? "Value could not be built from the expression" : buildError, 0};
+        return value;
+    }
+
+    std::unique_ptr<Value> CompileValueAny(std::string_view source, std::string* error) {
+        const auto first = source.find_first_not_of(" \t\r\n");
+        const auto last = source.find_last_not_of(" \t\r\n");
+        if (first == std::string_view::npos) {
+            if (error) *error = "Empty value expression";
+            return nullptr;
+        }
+        const auto trimmed = source.substr(first, last - first + 1);
+
+        if (trimmed.front() == '{') {
+            try {
+                return Value::FromJson(nlohmann::json::parse(trimmed), error);
+            } catch (const std::exception& e) {
+                if (error) *error = std::string("Invalid JSON: ") + e.what();
+                return nullptr;
+            }
+        }
+
+        // A bare name that is not a type is a named value, defined now or later
+        const std::string word(trimmed);
+        if (NamedValueDef::IsValidName(word) && !Registry::Get().FindType(word) && !IEquals(word, "true") &&
+            !IEquals(word, "false")) {
+            return std::make_unique<NamedValueRef>(word);
+        }
+
+        ParseError parseError;
+        auto value = CompileValue(trimmed, &parseError);
+        if (!value && error) {
+            *error = parseError.message + " (at position " + std::to_string(parseError.position) + ")";
+        }
+        return value;
+    }
+
+    std::string ValueFromJson(const nlohmann::json& json) {
+        return PrintValueNode(json, 0);
+    }
+
+    std::string ToExpression(const Value& value) {
+        return PrintValueNode(value.ToJson(), 0);
     }
 
 } // namespace ConditionEngine::Expression

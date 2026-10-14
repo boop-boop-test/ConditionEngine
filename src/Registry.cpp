@@ -2,6 +2,7 @@
 #include "ConditionEngine/Availability.h"
 
 #include <mutex>
+#include <sstream>
 
 namespace ConditionEngine {
 
@@ -11,6 +12,24 @@ namespace ConditionEngine {
                            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
             return s;
         }
+
+        // "survival.hunger_level" -> "Hunger Level"
+        std::string LabelFromId(const std::string& id) {
+            std::string word = id.substr(id.find_last_of('.') == std::string::npos ? 0 : id.find_last_of('.') + 1);
+            std::string label;
+            bool upper = true;
+            for (char c : word) {
+                if (c == '_' || c == '-' || c == ' ') {
+                    if (!label.empty() && label.back() != ' ') label += ' ';
+                    upper = true;
+                    continue;
+                }
+                label += upper ? static_cast<char>(std::toupper(static_cast<unsigned char>(c))) : c;
+                upper = false;
+            }
+            return label.empty() ? id : label;
+        }
+
     }
 
     Registry& Registry::Get() {
@@ -126,6 +145,7 @@ namespace ConditionEngine {
     // -- Categories and catalog ---------------------------------------------
 
     void Registry::RegisterCategory(CategoryInfo category) {
+        if (category.source.empty()) category.source = "ConditionEngine";
         std::unique_lock lock(mutex_);
         for (auto& existing : categories_) {
             if (existing.id == category.id) {
@@ -134,6 +154,43 @@ namespace ConditionEngine {
             }
         }
         categories_.push_back(std::move(category));
+    }
+
+    bool Registry::RegisterCategory(CategoryInfo category, const std::string& owner, std::string* error) {
+        auto fail = [&](std::string message) {
+            if (error) *error = std::move(message);
+            return false;
+        };
+        if (category.id.empty()) return fail("a category needs an \"id\"");
+        if (category.label.empty()) category.label = LabelFromId(category.id);
+        category.source = owner.empty() ? "plugin" : owner;
+
+        std::unique_lock lock(mutex_);
+        auto find = [&](const std::string& id) -> CategoryInfo* {
+            for (auto& c : categories_) {
+                if (c.id == id) return &c;
+            }
+            return nullptr;
+        };
+        if (auto* existing = find(category.id)) {
+            // Shared and topical: the first registrant keeps the label; later ones reuse
+            // the id and may only fill in what is missing
+            if (existing->description.empty()) existing->description = category.description;
+            if (existing->icon.empty()) existing->icon = category.icon;
+            if (existing->parent.empty() && !category.parent.empty() && category.parent != existing->id) {
+                existing->parent = category.parent;
+            }
+            return true;
+        }
+        // Refuse a parent chain that leads back to this id
+        std::string parent = category.parent;
+        for (int depth = 0; depth < 32 && !parent.empty(); ++depth) {
+            if (parent == category.id) return fail("category '" + category.id + "' would be its own ancestor");
+            const auto* up = find(parent);
+            parent = up ? up->parent : std::string{};
+        }
+        categories_.push_back(std::move(category));
+        return true;
     }
 
     std::vector<CategoryInfo> Registry::GetCategories() const {
@@ -161,37 +218,220 @@ namespace ConditionEngine {
         }
     }
 
+    namespace {
+        bool IEq(std::string_view a, std::string_view b) {
+            return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) {
+                       return std::tolower(static_cast<unsigned char>(x)) == std::tolower(static_cast<unsigned char>(y));
+                   });
+        }
+
+        // What a picker asks for; it filters by category, source, tags and text itself
+        struct CatalogFilter {
+            bool offered = false;   // apply `offer`
+            std::string forOwner;   // the picker's identity, for Offer::Owner items
+            std::unordered_set<std::string> include{"types", "values", "conditions", "categories"};
+
+            static CatalogFilter From(const nlohmann::json& j) {
+                CatalogFilter f;
+                if (!j.is_object()) return f;
+                f.offered = j.value("offered", true);
+                f.forOwner = Lower(j.value("for", ""));
+                if (j.contains("include") && j["include"].is_array()) {
+                    f.include.clear();
+                    for (const auto& v : j["include"]) {
+                        if (v.is_string()) f.include.insert(Lower(v.get<std::string>()));
+                    }
+                }
+                return f;
+            }
+        };
+    }
+
+    const char* OfferName(Offer offer) {
+        switch (offer) {
+            case Offer::Owner: return "owner";
+            case Offer::Nowhere: return "nowhere";
+            default: return "everywhere";
+        }
+    }
+
+    std::optional<Offer> ParseOffer(std::string_view name) {
+        if (IEq(name, "everywhere")) return Offer::Everywhere;
+        if (IEq(name, "owner")) return Offer::Owner;
+        if (IEq(name, "nowhere")) return Offer::Nowhere;
+        return std::nullopt;
+    }
+
+    bool NamedConditionInfo::ReadMetadata(const nlohmann::json& definition, std::string* error) {
+        if (!definition.is_object()) return true;
+        label = definition.value("label", label);
+        category = definition.value("category", category);
+        icon = definition.value("icon", icon);
+        description = definition.value("description", description);
+        owner = definition.value("owner", owner);
+        if (definition.contains("offer")) {
+            auto parsed = definition["offer"].is_string() ? ParseOffer(definition["offer"].get<std::string>()) : std::nullopt;
+            if (!parsed) {
+                if (error) *error = "\"offer\" must be everywhere, owner or nowhere";
+                return false;
+            }
+            offer = *parsed;
+        }
+        if (definition.contains("tags")) tags = ReadStringList(definition, "tags");
+        return true;
+    }
+
+    void Registry::RegisterSource(const std::string& id, const std::string& label) {
+        if (id.empty()) return;
+        std::unique_lock lock(mutex_);
+        sourceLabels_[Lower(id)] = label.empty() ? id : label;
+    }
+
+    std::string Registry::SourceLabel(const std::string& id) const {
+        std::shared_lock lock(mutex_);
+        auto it = sourceLabels_.find(Lower(id));
+        return it != sourceLabels_.end() ? it->second : id;
+    }
+
     nlohmann::json Registry::GetCatalog() const {
-        nlohmann::json categories = nlohmann::json::array();
-        for (const auto& c : GetCategories()) {
-            categories.push_back({{"id", c.id}, {"label", c.label}, {"order", c.order}});
+        return GetCatalog(nlohmann::json{{"offered", false}});
+    }
+
+    nlohmann::json Registry::GetCatalog(const nlohmann::json& filterJson) const {
+        using json = nlohmann::json;
+        const auto filter = CatalogFilter::From(filterJson);
+
+        // Registered categories, plus one per unknown id an item names (top level,
+        // labelled from the id) - items are never dropped or regrouped
+        std::map<std::string, CategoryInfo> categories;
+        for (auto& c : GetCategories()) categories.emplace(c.id, std::move(c));
+        auto resolveCategory = [&](const std::string& id, const char* fallback) -> std::string {
+            const std::string key = id.empty() ? fallback : id;
+            if (!categories.contains(key)) {
+                CategoryInfo created;
+                created.id = key;
+                created.label = LabelFromId(key);
+                created.order = 1000;
+                categories.emplace(key, std::move(created));
+            }
+            return key;
+        };
+        auto offeredTo = [&](Offer offer, const std::string& owner) {
+            if (!filter.offered) return true;
+            if (offer == Offer::Everywhere) return true;
+            return offer == Offer::Owner && !filter.forOwner.empty() && Lower(owner) == filter.forOwner;
+        };
+
+        std::map<std::string, int> sourceCounts;
+        auto stamp = [&](json& item, const std::string& source, const std::string& category, const std::string& declared,
+                         Offer offer, std::vector<std::string> tags) {
+            item["source"] = source;
+            item["sourceLabel"] = SourceLabel(source);
+            item["owner"] = source;
+            item["category"] = category;
+            if (!declared.empty() && declared != category) item["declaredCategory"] = declared;
+            item["offer"] = OfferName(offer);
+            item["tags"] = std::move(tags);
+            ++sourceCounts[source];
+        };
+
+        // ── Types ──
+        json types = json::array();
+        if (filter.include.contains("types")) {
+            for (const auto* info : GetTypes()) {
+                const Offer offer = info->hidden ? Offer::Nowhere : info->offer;
+                std::vector<std::string> tags = info->tags;
+                tags.push_back("condition");
+                if (info->value) tags.push_back("value");
+                if (info->name == "PapyrusCall") tags.push_back("async");
+                if (!info->requiresPlugins.empty()) tags.push_back("requires-plugin");
+                const auto category = resolveCategory(info->category, "other");
+                if (!offeredTo(offer, info->source)) continue;
+
+                json fields = json::array();
+                for (const auto& f : info->fields) fields.push_back(FieldToJson(f));
+                json type{
+                    {"name", info->name},
+                    {"label", info->label},
+                    {"description", info->description},
+                    {"aliases", info->aliases},
+                    {"fields", std::move(fields)},
+                    {"positional", info->positional},
+                    {"dependencies", DependencyNames(DefaultDependencies(*info))},
+                };
+                type["requiresPlugins"] = info->requiresPlugins;
+                type["availability"] = Availability::Get().CheckType(*info).ToJson();
+                if (!info->icon.empty()) type["icon"] = info->icon;
+                if (!info->compareField.empty()) type["compareField"] = info->compareField;
+                if (offer == Offer::Nowhere) type["hidden"] = true;  // pre-v6 readers
+                if (info->value) type["value"] = info->value->ToJson();
+                stamp(type, info->source, category, info->category, offer, std::move(tags));
+                types.push_back(std::move(type));
+            }
         }
 
-        nlohmann::json types = nlohmann::json::array();
-        for (const auto* info : GetTypes()) {
-            nlohmann::json fields = nlohmann::json::array();
-            for (const auto& f : info->fields) fields.push_back(FieldToJson(f));
-
-            nlohmann::json type{
-                {"name", info->name},
-                {"label", info->label},
-                {"category", info->category},
-                {"description", info->description},
-                {"aliases", info->aliases},
-                {"fields", std::move(fields)},
-                {"positional", info->positional},
-                {"dependencies", DependencyNames(DefaultDependencies(*info))},
-                {"source", info->source},
-            };
-            type["requiresPlugins"] = info->requiresPlugins;
-            type["availability"] = Availability::Get().CheckType(*info).ToJson();
-            if (!info->icon.empty()) type["icon"] = info->icon;
-            if (!info->compareField.empty()) type["compareField"] = info->compareField;
-            if (info->hidden) type["hidden"] = true;
-            types.push_back(std::move(type));
+        // ── Named values ──
+        json namedValues = json::array();
+        if (filter.include.contains("values")) {
+            for (const auto& def : ListNamedValues()) {
+                std::vector<std::string> tags = def->tags;
+                tags.push_back("value");
+                tags.push_back(def->global ? "global" : "per-actor");
+                if (def->pushed) tags.push_back("pushed");
+                if (def->value && def->value->ToJson().dump().find("\"PapyrusCall\"") != std::string::npos) tags.push_back("async");
+                if (!def->requiresPlugins.empty() || !def->requiresDlls.empty()) tags.push_back("requires-plugin");
+                const auto owner = def->owner.empty() ? def->source : def->owner;
+                const auto category = resolveCategory(def->category, "values");
+                if (!offeredTo(def->offer, owner)) continue;
+                json item = def->ToJson();
+                if (!def->icon.empty()) item["icon"] = def->icon;
+                if (!def->description.empty()) item["description"] = def->description;
+                item["file"] = def->source;
+                stamp(item, owner, category, def->category, def->offer, std::move(tags));
+                namedValues.push_back(std::move(item));
+            }
         }
 
-        return {{"version", 1}, {"availabilityRevision", Availability::Get().Revision()}, {"categories", std::move(categories)}, {"types", std::move(types)}};
+        // ── Named conditions (engine-owned) ──
+        json namedConditions = json::array();
+        if (filter.include.contains("conditions")) {
+            for (const auto& info : ListNamed()) {
+                std::vector<std::string> tags = info.tags;
+                tags.push_back("condition");
+                const auto owner = info.owner.empty() ? info.source : info.owner;
+                const auto category = resolveCategory(info.category, "named");
+                if (!offeredTo(info.offer, owner)) continue;
+                const std::string label = info.label.empty() ? info.id : info.label;
+                json item{{"id", info.id}, {"label", label}, {"expression", info.expression}, {"file", info.source}};
+                if (!info.icon.empty()) item["icon"] = info.icon;
+                if (!info.description.empty()) item["description"] = info.description;
+                stamp(item, owner, category, info.category, info.offer, std::move(tags));
+                namedConditions.push_back(std::move(item));
+            }
+        }
+
+        json categoryList = json::array();
+        if (filter.include.contains("categories")) {
+            std::vector<const CategoryInfo*> ordered;
+            for (const auto& [id, c] : categories) ordered.push_back(&c);
+            std::stable_sort(ordered.begin(), ordered.end(), [](const CategoryInfo* a, const CategoryInfo* b) {
+                return a->order != b->order ? a->order < b->order : a->label < b->label;
+            });
+            for (const auto* c : ordered) categoryList.push_back(c->ToJson());
+        }
+
+        json sources = json::array();
+        for (const auto& [id, count] : sourceCounts) {
+            sources.push_back({{"id", id}, {"label", SourceLabel(id)}, {"count", count}});
+        }
+
+        return {{"version", 2},
+                {"availabilityRevision", Availability::Get().Revision()},
+                {"categories", std::move(categoryList)},
+                {"sources", std::move(sources)},
+                {"types", std::move(types)},
+                {"namedValues", std::move(namedValues)},
+                {"namedConditions", std::move(namedConditions)}};
     }
 
     nlohmann::json Registry::GetJsonSchema() const {
@@ -244,6 +484,21 @@ namespace ConditionEngine {
         Availability::Get().Invalidate();
     }
 
+    void Registry::RegisterNamed(const std::string& id, std::shared_ptr<const Condition> condition, NamedConditionInfo info) {
+        if (id.empty() || !condition) return;
+        info.id = id;
+        std::unique_lock lock(mutex_);
+        auto& entry = named_[id];
+        if (entry.condition && entry.info.source != info.source) {
+            SKSE::log::warn("ConditionEngine: named condition '{}' from '{}' replaced by '{}'", id, entry.info.source,
+                            info.source);
+        }
+        entry.condition = std::move(condition);
+        entry.info = std::move(info);
+        lock.unlock();
+        Availability::Get().Invalidate();
+    }
+
     bool Registry::UnregisterNamed(const std::string& id) {
         std::unique_lock lock(mutex_);
         const bool removed = named_.erase(id) > 0;
@@ -254,7 +509,8 @@ namespace ConditionEngine {
 
     std::size_t Registry::UnregisterSource(const std::string& source) {
         std::unique_lock lock(mutex_);
-        const auto removed = std::erase_if(named_, [&](const auto& kv) { return kv.second.info.source == source; });
+        const auto removed = std::erase_if(named_, [&](const auto& kv) { return kv.second.info.source == source; }) +
+                             std::erase_if(namedValues_, [&](const auto& kv) { return kv.second->source == source; });
         lock.unlock();
         if (removed) Availability::Get().Invalidate();
         return removed;
@@ -291,6 +547,45 @@ namespace ConditionEngine {
         resolvers_.push_back(std::move(resolver));
         lock.unlock();
         Availability::Get().Invalidate();
+    }
+
+    // ── Named values ─────────────────────────────────────────────────────────
+
+    void Registry::RegisterNamedValue(std::shared_ptr<const NamedValueDef> definition) {
+        if (!definition || definition->name.empty()) return;
+        std::unique_lock lock(mutex_);
+        auto& entry = namedValues_[Lower(definition->name)];
+        if (entry && entry->source != definition->source) {
+            SKSE::log::warn("ConditionEngine: named value '{}' from '{}' replaced by '{}'",
+                            definition->name, entry->source, definition->source);
+        }
+        entry = std::move(definition);
+        lock.unlock();
+        Availability::Get().Invalidate();
+    }
+
+    bool Registry::UnregisterNamedValue(const std::string& name) {
+        std::unique_lock lock(mutex_);
+        const bool removed = namedValues_.erase(Lower(name)) > 0;
+        lock.unlock();
+        if (removed) Availability::Get().Invalidate();
+        return removed;
+    }
+
+    std::shared_ptr<const NamedValueDef> Registry::FindNamedValue(const std::string& name) const {
+        if (name.empty()) return nullptr;
+        std::shared_lock lock(mutex_);
+        auto it = namedValues_.find(Lower(name));
+        return it != namedValues_.end() ? it->second : nullptr;
+    }
+
+    std::vector<std::shared_ptr<const NamedValueDef>> Registry::ListNamedValues() const {
+        std::shared_lock lock(mutex_);
+        std::vector<std::shared_ptr<const NamedValueDef>> result;
+        result.reserve(namedValues_.size());
+        for (const auto& [key, def] : namedValues_) result.push_back(def);
+        std::sort(result.begin(), result.end(), [](const auto& a, const auto& b) { return a->name < b->name; });
+        return result;
     }
 
     // ── Providers ────────────────────────────────────────────────────────────

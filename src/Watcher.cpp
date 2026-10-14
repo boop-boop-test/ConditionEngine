@@ -3,6 +3,7 @@
 #include "ConditionEngine/Conditions/ActorConditions.h"
 #include "ConditionEngine/EvaluationContext.h"
 #include "ConditionEngine/Registry.h"
+#include "ConditionEngine/Values/PushedValues.h"
 
 #include <cmath>
 #include <thread>
@@ -12,6 +13,7 @@ namespace ConditionEngine {
     namespace {
         constexpr auto kAllDependencies = static_cast<EventDependency>((1u << kEventDependencyBitCount) - 1);
         constexpr RE::FormID kAnyActor = static_cast<RE::FormID>(-1);
+        constexpr auto kFrame = std::chrono::milliseconds(16);
 
         // Snapshot flag bits → dependency fired when the bit flips
         enum SnapshotFlag : std::uint32_t {
@@ -225,20 +227,48 @@ namespace ConditionEngine {
     }
 
     void Watcher::Unwatch(WatchId id) {
-        std::lock_guard lock(mutex_);
-        entries_.erase(id);
+        {
+            std::lock_guard lock(mutex_);
+            if (entries_.erase(id) > 0) return;
+        }
+        std::unique_lock lock(valueMutex_);
+        auto it = valueEntries_.find(id);
+        if (it == valueEntries_.end()) return;
+        auto sampler = it->second.sampler;
+        valueEntries_.erase(it);
+        if (--sampler->users == 0) {
+            // An orphaned sampler's key may already belong to a newer sampler
+            if (auto at = samplers_.find(sampler->key); at != samplers_.end() && at->second == sampler) samplers_.erase(at);
+        } else {
+            sampler->interval = WatchOptions::kNever;
+            for (const auto& [otherId, entry] : valueEntries_) {
+                if (entry.sampler == sampler) sampler->interval = std::min(sampler->interval, entry.pollInterval);
+            }
+        }
+        lock.unlock();
+        shortestValueIntervalMs_ = ShortestValueInterval().count();
     }
 
     std::size_t Watcher::GetWatchCount() const {
-        std::lock_guard lock(mutex_);
-        return entries_.size();
+        std::size_t count;
+        {
+            std::lock_guard lock(mutex_);
+            count = entries_.size();
+        }
+        return count + GetValueWatchCount();
     }
 
     bool Watcher::IsWatchingActor(RE::Actor* actor) const {
         const RE::FormID key = ActorKey(actor);
-        std::lock_guard lock(mutex_);
-        return std::any_of(entries_.begin(), entries_.end(),
-                           [key](const auto& kv) { return kv.second.actorId == key; });
+        {
+            std::lock_guard lock(mutex_);
+            if (std::any_of(entries_.begin(), entries_.end(), [key](const auto& kv) { return kv.second.actorId == key; })) {
+                return true;
+            }
+        }
+        std::shared_lock lock(valueMutex_);
+        return std::any_of(samplers_.begin(), samplers_.end(),
+                           [key](const auto& kv) { return kv.second->actorId == key; });
     }
 
     std::optional<bool> Watcher::Refresh(WatchId id) {
@@ -255,6 +285,47 @@ namespace ConditionEngine {
         Evaluate([events, only](WatchId, const Entry& entry) {
             return HasDependency(entry.dependencies, events) && (only == kAnyActor || entry.actorId == only);
         });
+        SampleValues([events, only](const Sampler& sampler) {
+            // Global values answer for every actor
+            return HasDependency(sampler.dependencies, events) &&
+                   (only == kAnyActor || sampler.actorId == only || !sampler.value->ReadsActor());
+        });
+    }
+
+    void Watcher::PostEvent(EventDependency events, RE::FormID actorFormId) {
+        if (GetWatchCount() == 0) return;
+        const RE::FormID key = actorFormId == kAllActors ? kAnyActor : (actorFormId == 0x14 ? 0 : actorFormId);
+        bool schedule;
+        {
+            std::lock_guard lock(postMutex_);
+            posted_[key] |= events;
+            schedule = !postQueued_;
+            postQueued_ = true;
+        }
+        if (!schedule) return;
+        if (auto* tasks = SKSE::GetTaskInterface()) {
+            tasks->AddTask([]() { Watcher::Get().DrainPosted(); });
+        } else {
+            std::lock_guard lock(postMutex_);
+            posted_.clear();
+            postQueued_ = false;
+        }
+    }
+
+    void Watcher::DrainPosted() {
+        std::unordered_map<RE::FormID, EventDependency> posted;
+        {
+            std::lock_guard lock(postMutex_);
+            posted.swap(posted_);
+            postQueued_ = false;
+        }
+        if (auto it = posted.find(kAnyActor); it != posted.end()) {
+            NotifyEvent(it->second, nullptr);
+            posted.erase(it);
+        }
+        for (const auto& [key, events] : posted) {
+            if (auto* actor = ResolveActor(key)) NotifyEvent(events, actor);
+        }
     }
 
     void Watcher::SetPollInterval(std::chrono::milliseconds interval) {
@@ -269,7 +340,21 @@ namespace ConditionEngine {
     }
 
     void Watcher::Tick() {
+        tickQueued_ = false;
         if (!IsWorldReady()) return;
+
+        const auto tickStart = Clock::now();
+        PushedValues::Get().ExpireDue();
+
+        // Value watches due for a sample (a little early beats a whole tick late)
+        SampleValues([tickStart](const Sampler& sampler) {
+            if (sampler.interval == WatchOptions::kNever) return false;
+            const auto slack = std::min<std::chrono::milliseconds>(sampler.interval / 4, kFrame);
+            return tickStart - sampler.lastSampled >= sampler.interval - slack;
+        });
+
+        if (tickStart - lastDetect_ < detectInterval_ - kFrame) return;
+        lastDetect_ = tickStart;
 
         // ── World state ──────────────────────────────────────────────────────
         EventDependency worldEvents = EventDependency::None;
@@ -294,6 +379,10 @@ namespace ConditionEngine {
             std::lock_guard lock(mutex_);
             for (const auto& [id, entry] : entries_) watched.insert(entry.actorId);
             defaultInterval = pollInterval_;
+        }
+        {
+            std::shared_lock lock(valueMutex_);
+            for (const auto& [key, sampler] : samplers_) watched.insert(sampler->actorId);
         }
 
         std::unordered_map<RE::FormID, EventDependency> actorEvents;
@@ -330,6 +419,13 @@ namespace ConditionEngine {
             const auto interval = entry.pollInterval.count() == 0 ? defaultInterval : entry.pollInterval;
             return interval != WatchOptions::kNever && now - entry.lastEvaluated >= interval;
         });
+        // Event-driven value samples (world changes reach global values too)
+        SampleValues([&](const Sampler& sampler) {
+            if (sampler.lastSampled >= tickStart) return false;  // sampled this tick already
+            if (HasDependency(sampler.dependencies, worldEvents)) return true;
+            auto it = actorEvents.find(sampler.actorId);
+            return it != actorEvents.end() && HasDependency(sampler.dependencies, it->second);
+        });
     }
 
     void Watcher::Evaluate(const std::function<bool(WatchId, const Entry&)>& select) {
@@ -342,7 +438,7 @@ namespace ConditionEngine {
         {
             std::lock_guard lock(mutex_);
             for (const auto& [id, entry] : entries_) {
-                if (select(id, entry)) work.push_back({id, entry.condition, entry.actorId});
+                if (!entry.orphaned && select(id, entry)) work.push_back({id, entry.condition, entry.actorId});
             }
         }
         if (work.empty()) return;
@@ -392,6 +488,258 @@ namespace ConditionEngine {
         }
     }
 
+    // ── Value watches ────────────────────────────────────────────────────────
+
+    std::uint32_t ValueSample::AgeMs() const {
+        if (!sampledAt) return 0xFFFFFFFFu;
+        const auto age = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - *sampledAt).count();
+        if (age <= 0) return 0;
+        return age >= 0xFFFFFFFELL ? 0xFFFFFFFEu : static_cast<std::uint32_t>(age);
+    }
+
+    std::size_t Watcher::GetValueWatchCount() const {
+        std::shared_lock lock(valueMutex_);
+        return valueEntries_.size();
+    }
+
+    std::chrono::milliseconds Watcher::ShortestValueInterval() const {
+        std::shared_lock lock(valueMutex_);
+        auto shortest = std::chrono::milliseconds(0);
+        for (const auto& [key, sampler] : samplers_) {
+            if (sampler->interval == WatchOptions::kNever) continue;
+            if (shortest.count() == 0 || sampler->interval < shortest) shortest = sampler->interval;
+        }
+        return shortest;
+    }
+
+    WatchId Watcher::WatchValue(std::shared_ptr<const Value> value, RE::Actor* actor, ValueWatchCallback callback,
+                                const ValueWatchOptions& options) {
+        if (!value) return 0;
+
+        // Values that read no actor share one sample across actors
+        const RE::FormID actorId = value->ReadsActor() ? ActorKey(actor) : 0;
+        const std::string key = value->ToJson().dump() + "@" + std::to_string(actorId);
+        auto interval = options.pollInterval.count() == 0 ? GetPollInterval() : options.pollInterval;
+        if (interval != WatchOptions::kNever) interval = std::max<std::chrono::milliseconds>(interval, kFrame);
+
+        ValueEntry entry;
+        entry.callback = std::move(callback);
+        entry.options = options;
+        entry.pollInterval = interval;
+        entry.above.assign(options.thresholds.size(), false);
+
+        std::shared_ptr<Sampler> sampler;
+        bool fresh = false;
+        WatchId id;
+        {
+            std::unique_lock lock(valueMutex_);
+            auto& slot = samplers_[key];
+            if (!slot) {
+                slot = std::make_shared<Sampler>();
+                slot->value = std::move(value);
+                slot->key = key;
+                slot->actorId = actorId;
+                slot->dependencies = slot->value->GetEventDependencies() | EventDependency::Value |
+                                     EventDependency::Availability;
+                fresh = true;
+            }
+            sampler = slot;
+            sampler->dependencies |= options.extraDependencies;
+            sampler->interval = std::min(sampler->interval, interval);
+            ++sampler->users;
+            entry.sampler = sampler;
+            {
+                std::lock_guard idLock(mutex_);  // condition and value watches share ids
+                id = nextId_++;
+                if (nextId_ == 0) nextId_ = 1;
+            }
+            valueEntries_.emplace(id, std::move(entry));
+        }
+        shortestValueIntervalMs_ = ShortestValueInterval().count();
+
+        // First sample now when possible; an existing sampler's sample seeds the new watch
+        if (IsWorldReady()) {
+            if (fresh) SampleValues([&](const Sampler& s) { return &s == sampler.get(); });
+            else SampleValues([](const Sampler&) { return false; });
+        }
+        return id;
+    }
+
+    bool Watcher::ReadValueWatch(WatchId id, ValueSample& out) const {
+        std::shared_ptr<Sampler> sampler;
+        {
+            std::shared_lock lock(valueMutex_);
+            auto it = valueEntries_.find(id);
+            if (it == valueEntries_.end()) return false;
+            sampler = it->second.sampler;
+        }
+        std::lock_guard lock(sampler->sampleMutex);
+        out = sampler->sample;
+        return true;
+    }
+
+    std::optional<ValueSample> Watcher::RefreshValue(WatchId id) {
+        if (!IsWorldReady()) return std::nullopt;
+        std::shared_ptr<Sampler> sampler;
+        {
+            std::shared_lock lock(valueMutex_);
+            auto it = valueEntries_.find(id);
+            if (it == valueEntries_.end()) return std::nullopt;
+            sampler = it->second.sampler;
+        }
+        SampleValues([&](const Sampler& s) { return &s == sampler.get(); });
+        std::lock_guard lock(sampler->sampleMutex);
+        return sampler->sample;
+    }
+
+    void Watcher::SampleValues(const std::function<bool(const Sampler&)>& select) {
+        std::vector<std::shared_ptr<Sampler>> due;
+        {
+            std::shared_lock lock(valueMutex_);
+            for (const auto& [key, sampler] : samplers_) {
+                if (select(*sampler)) due.push_back(sampler);
+            }
+        }
+
+        const auto now = Clock::now();
+        const auto revision = Availability::Get().Revision();
+        // One context per actor per pass; contexts snapshot lazily, so this is cheap
+        std::unordered_map<RE::FormID, std::unique_ptr<EvaluationContext>> contexts;
+        for (const auto& sampler : due) {
+            if (sampler->checkedRevision != revision) {
+                const auto status = Availability::Get().CheckValue(*sampler->value);
+                sampler->availability = status.state;
+                sampler->availabilityReason = status.reason;
+                sampler->checkedRevision = revision;
+            }
+
+            ValueResult result;
+            bool keepValue = false;  // engine-side failure: keep the last number for smoothing
+            RE::Actor* target = ResolveActor(sampler->actorId);
+            if (sampler->availability != AvailabilityState::Available) {
+                result = ValueResult::Fail(sampler->availability == AvailabilityState::Pending ? ValueStatus::Pending
+                                                                                               : ValueStatus::Unavailable,
+                                           sampler->availabilityReason);
+                keepValue = true;
+            } else if (!target || !target->Is3DLoaded()) {
+                result = ValueResult::Fail(ValueStatus::Unavailable, "actor not loaded");
+                keepValue = true;
+            } else {
+                auto& context = contexts[sampler->actorId];
+                if (!context) context = std::make_unique<EvaluationContext>(target);
+                result = sampler->value->Read(*context);
+            }
+
+            sampler->lastSampled = now;
+            std::lock_guard lock(sampler->sampleMutex);
+            auto& sample = sampler->sample;
+            if (!keepValue || !sample.sampledAt) sample.value = result.value;
+            sample.status = result.status;
+            sample.reason = std::move(result.reason);
+            sample.sampledAt = result.sampledAt.value_or(now);
+            sample.availabilityRevision = revision;
+        }
+
+        // Fire callbacks for every watch whose sampler has a sample it has not seen
+        struct Fire {
+            ValueWatchCallback callback;
+            WatchId id;
+            RE::FormID actorId;
+            ValueSample sample;
+            int crossed;
+        };
+        std::vector<Fire> toFire;
+        {
+            std::unique_lock lock(valueMutex_);
+            for (auto& [id, entry] : valueEntries_) {
+                const auto& sampler = entry.sampler;
+                const bool wasDue = std::any_of(due.begin(), due.end(), [&](const auto& d) { return d == sampler; });
+                if (!wasDue && entry.delivered) continue;
+
+                ValueSample sample;
+                {
+                    std::lock_guard sampleLock(sampler->sampleMutex);
+                    sample = sampler->sample;
+                }
+                if (!sample.sampledAt) continue;  // never sampled yet
+
+                const double v = sample.value;
+                const auto& thresholds = entry.options.thresholds;
+                if (!entry.delivered) {
+                    entry.delivered = true;
+                    entry.lastStatus = sample.status;
+                    entry.lastFiredValue = v;
+                    for (std::size_t i = 0; i < thresholds.size(); ++i) entry.above[i] = v >= thresholds[i];
+                    if (entry.callback && entry.options.fireImmediately) {
+                        toFire.push_back({entry.callback, id, sampler->actorId, sample, -1});
+                    }
+                    continue;
+                }
+
+                bool general = sample.status != entry.lastStatus;
+                entry.lastStatus = sample.status;
+                std::vector<int> crossings;
+                if (sample.status == ValueStatus::Ok) {
+                    for (std::size_t i = 0; i < thresholds.size(); ++i) {
+                        if (!entry.above[i] && v >= thresholds[i]) {
+                            entry.above[i] = true;
+                            crossings.push_back(static_cast<int>(i));
+                        } else if (entry.above[i] && v < thresholds[i] - entry.options.hysteresis) {
+                            entry.above[i] = false;
+                            crossings.push_back(static_cast<int>(i));
+                        }
+                    }
+                    const auto& last = entry.lastFiredValue;
+                    if (entry.options.minStep > 0.0) {
+                        general = general || !last || std::abs(v - *last) >= entry.options.minStep;
+                    } else if (thresholds.empty()) {
+                        general = general || !last || v != *last;
+                    }
+                }
+                if (general || !crossings.empty()) entry.lastFiredValue = v;
+                if (!entry.callback) continue;
+                for (int index : crossings) toFire.push_back({entry.callback, id, sampler->actorId, sample, index});
+                if (general && crossings.empty()) toFire.push_back({entry.callback, id, sampler->actorId, sample, -1});
+            }
+        }
+
+        for (const auto& fire : toFire) {
+            try {
+                fire.callback(fire.id, ResolveActor(fire.actorId), fire.sample, fire.crossed);
+            } catch (const std::exception& e) {
+                SKSE::log::error("ConditionEngine: value watch {} callback threw: {}", fire.id, e.what());
+            }
+        }
+    }
+
+    void Watcher::OnGameLoad() {
+        auto isCreated = [](RE::FormID id) { return (id & 0xFF000000u) == 0xFF000000u; };
+        {
+            std::lock_guard lock(mutex_);
+            for (auto& [id, entry] : entries_) {
+                if (isCreated(entry.actorId)) entry.orphaned = true;
+            }
+        }
+        std::vector<std::shared_ptr<Sampler>> orphaned;
+        {
+            std::unique_lock lock(valueMutex_);
+            for (auto it = samplers_.begin(); it != samplers_.end();) {
+                if (isCreated(it->second->actorId)) {
+                    orphaned.push_back(it->second);  // watches keep it; nothing samples it again
+                    it = samplers_.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+        }
+        for (const auto& sampler : orphaned) {
+            std::lock_guard lock(sampler->sampleMutex);
+            sampler->sample.status = ValueStatus::Unavailable;
+            sampler->sample.reason = "actor from a previous game (created reference); watch it again";
+        }
+        shortestValueIntervalMs_ = ShortestValueInterval().count();
+    }
+
     void Watcher::Install(std::chrono::milliseconds detectInterval) {
         static const auto availabilitySubscription = Availability::Get().Subscribe([](std::uint64_t) {
             if (auto* tasks = SKSE::GetTaskInterface()) tasks->AddTask([]() {
@@ -405,6 +753,7 @@ namespace ConditionEngine {
             installed_ = true;
         }
         if (detectInterval.count() <= 0) detectInterval = std::chrono::milliseconds(1000);
+        detectInterval_ = detectInterval;
 
         auto* sink = EventSink::GetSingleton();
         if (auto* holder = RE::ScriptEventSourceHolder::GetSingleton()) {
@@ -426,13 +775,23 @@ namespace ConditionEngine {
             ui->AddEventSink<RE::MenuOpenCloseEvent>(sink);
         }
 
-        // Detection ticks on a background timer; evaluation happens on the main thread
+        // Ticks on a background timer (every detect interval, or faster while value
+        // watches need it, down to a frame); evaluation happens on the main thread
         std::thread([detectInterval]() {
             for (;;) {
-                std::this_thread::sleep_for(detectInterval);
-                if (Watcher::Get().GetWatchCount() == 0) continue;
+                auto& watcher = Watcher::Get();
+                auto step = detectInterval;
+                if (const auto shortest = watcher.shortestValueIntervalMs_.load(); shortest > 0) {
+                    step = std::min(step, std::max<std::chrono::milliseconds>(std::chrono::milliseconds(shortest), kFrame));
+                }
+                std::this_thread::sleep_for(step);
+                if (watcher.GetWatchCount() == 0) continue;
+                // One queued tick at a time, so a stalled main thread does not pile them up
+                if (watcher.tickQueued_.exchange(true)) continue;
                 if (auto* tasks = SKSE::GetTaskInterface()) {
                     tasks->AddTask([]() { Watcher::Get().Tick(); });
+                } else {
+                    watcher.tickQueued_ = false;
                 }
             }
         }).detach();

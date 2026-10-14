@@ -117,6 +117,10 @@ namespace ConditionEngine {
         return seed;
     }
 
+    ValueResult RandomCondition::ReadValue(const EvaluationContext& context) const {
+        return ValueResult::Of(static_cast<int>(FNV1aHash(BuildSeedString(context)) % 100));  // the roll, 0 to 99
+    }
+
     bool RandomCondition::Evaluate(const EvaluationContext& context) const {
         std::string seed = BuildSeedString(context);
         std::uint32_t hash = FNV1aHash(seed);

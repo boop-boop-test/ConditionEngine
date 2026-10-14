@@ -1,6 +1,7 @@
 #include "ConditionEngine/Availability.h"
 #include "ConditionEngine/Registry.h"
 #include "ConditionEngine/Conditions/CallbackCondition.h"
+#include "ConditionEngine/Value.h"
 
 namespace ConditionEngine {
     namespace {
@@ -49,6 +50,46 @@ namespace ConditionEngine {
         return CheckNode(condition.ToJsonComplete(), names, 0);
     }
 
+    AvailabilityStatus Availability::CheckValue(const Value& value) const {
+        std::unordered_set<std::string> names;
+        return CheckValueNode(value.ToJson(), names, 0);
+    }
+
+    AvailabilityStatus Availability::CheckValueNode(const json& node, std::unordered_set<std::string>& names,
+                                                   std::size_t depth) const {
+        if (depth > 64) return {AvailabilityState::Unavailable, "Value dependency nesting exceeds 64 levels"};
+        if (!node.is_object()) return {};  // literals, ${param}
+        const auto type = Lower(node.value("type", std::string()));
+        AvailabilityStatus result;
+        if (type == "math") {
+            if (node.contains("args") && node["args"].is_array()) {
+                for (const auto& arg : node["args"]) Merge(result, CheckValueNode(arg, names, depth + 1));
+            }
+            return result;
+        }
+        if (type == "truth") {
+            return node.contains("condition") ? CheckNode(node["condition"], names, depth + 1) : result;
+        }
+        if (type == "namedvalue") {
+            const auto name = node.value("name", std::string());
+            const auto key = "$" + Lower(name);
+            if (!names.insert(key).second) return {AvailabilityState::Unavailable, "Circular named value: " + name};
+            if (auto def = Registry::Get().FindNamedValue(name)) {
+                for (const auto& plugin : def->requiresPlugins) Merge(result, PluginStatus(plugin));
+                for (const auto& dll : def->requiresDlls) {
+                    if (!GetModuleHandleA(dll.c_str())) Merge(result, {AvailabilityState::Unavailable, dll + " is not loaded"});
+                }
+                if (def->value) Merge(result, CheckValueNode(def->value->ToJson(), names, depth + 1));
+                if (def->enabledWhen) Merge(result, CheckNode(def->enabledWhen->ToJsonComplete(), names, depth + 1));
+            } else {
+                Merge(result, {AvailabilityState::Unavailable, "no value named " + name});
+            }
+            names.erase(key);
+            return result;
+        }
+        return CheckNode(node, names, depth);  // a numeric type
+    }
+
     AvailabilityStatus Availability::CheckNode(const json& node, std::unordered_set<std::string>& names,
                                               std::size_t depth) const {
         if (depth > 64) return {AvailabilityState::Unavailable, "Condition dependency nesting exceeds 64 levels"};
@@ -62,6 +103,8 @@ namespace ConditionEngine {
             if (field.type == FieldType::Conditions) {
                 if (value.is_array()) for (const auto& child : value) Merge(result, CheckNode(child, names, depth + 1));
                 else if (value.is_object()) Merge(result, CheckNode(value, names, depth + 1));
+            } else if (field.type == FieldType::Value) {
+                Merge(result, CheckValueNode(value, names, depth + 1));
             } else if (field.type == FieldType::Form || field.type == FieldType::FormList) {
                 // Portable form keys name their owner plugin explicitly. Bare EDIDs cannot establish this dependency.
                 auto checkForm = [&](const json& v) {

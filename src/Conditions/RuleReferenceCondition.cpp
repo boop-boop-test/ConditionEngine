@@ -40,6 +40,20 @@ namespace ConditionEngine {
         return inverted ? !result : result;
     }
 
+    TriResult RuleReferenceCondition::EvaluateTri(const EvaluationContext& context) const {
+        const std::string& key = GetKey();
+        if (context.rulesInProgress.count(key)) return TriResult::Of(false);
+        auto named = Registry::Get().FindNamed(key);
+        if (!named && !ruleUUID.empty() && !ruleName.empty()) named = Registry::Get().FindNamed(ruleName);
+        if (!named) return TriResult::Of(false);
+
+        context.rulesInProgress.insert(key);
+        auto r = named->EvaluateTri(context);
+        context.rulesInProgress.erase(key);
+        if (!r.Decided() || !inverted) return r;
+        return TriResult::Of(r.state == TriState::False);
+    }
+
     std::string RuleReferenceCondition::GetDescription() const {
         std::string desc = inverted ? "NOT " : "";
         desc += "Rule: " + ruleName;

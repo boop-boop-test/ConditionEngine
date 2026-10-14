@@ -61,6 +61,7 @@ set(CONDITION_ENGINE_HEADERS
     include/ConditionEngine/Conditions/ActorStateConditions.h
     include/ConditionEngine/Conditions/ActorValueConditions.h
     include/ConditionEngine/Conditions/CallbackCondition.h
+    include/ConditionEngine/Conditions/CompareCondition.h
     include/ConditionEngine/Conditions/ConstantCondition.h
     include/ConditionEngine/Conditions/EquipmentConditions.h
     include/ConditionEngine/Conditions/FactionConditions.h
@@ -69,6 +70,7 @@ set(CONDITION_ENGINE_HEADERS
     include/ConditionEngine/Conditions/GlobalVariableConditions.h
     include/ConditionEngine/Conditions/LocationConditions.h
     include/ConditionEngine/Conditions/LogicalConditions.h
+    include/ConditionEngine/Conditions/PapyrusCallCondition.h
     include/ConditionEngine/Conditions/QuestCategoryConditions.h
     include/ConditionEngine/Conditions/QuestConditions.h
     include/ConditionEngine/Conditions/RaceConditions.h
@@ -80,6 +82,10 @@ set(CONDITION_ENGINE_HEADERS
     include/ConditionEngine/Conditions/WeatherConditions.h
     include/ConditionEngine/Conditions/WorldConditions.h
     include/ConditionEngine/Settings.h
+    include/ConditionEngine/Value.h
+    include/ConditionEngine/ValueResult.h
+    include/ConditionEngine/Values/PushedValues.h
+    include/ConditionEngine/Values/ValueNodes.h
 )
 
 set(CONDITION_ENGINE_SOURCES
@@ -103,6 +109,7 @@ set(CONDITION_ENGINE_SOURCES
     src/Conditions/GlobalVariableConditions.cpp
     src/Conditions/LocationConditions.cpp
     src/Conditions/LogicalConditions.cpp
+    src/Conditions/PapyrusCallCondition.cpp
     src/Conditions/QuestCategoryConditions.cpp
     src/Conditions/QuestConditions.cpp
     src/Conditions/RaceConditions.cpp
@@ -114,6 +121,9 @@ set(CONDITION_ENGINE_SOURCES
     src/Conditions/WeatherConditions.cpp
     src/Conditions/WorldConditions.cpp
     src/Settings.cpp
+    src/Value.cpp
+    src/Conditions/CompareCondition.cpp
+    src/Values/PushedValues.cpp
 )
 
 # DLL-only: exported C API, Papyrus natives and the SKSE plugin entry point.
@@ -170,7 +180,7 @@ source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES
 ###############################################################################
 option(CONDITIONENGINE_BUILD_TESTS "Build ConditionEngine unit tests" ${PROJECT_IS_TOP_LEVEL})
 if(PROJECT_IS_TOP_LEVEL AND CONDITIONENGINE_BUILD_TESTS)
-    add_executable(condition-engine-tests tests/ExpressionTests.cpp ${CONDITION_ENGINE_SOURCES})
+    add_executable(condition-engine-tests tests/ExpressionTests.cpp tests/ValueTests.cpp ${CONDITION_ENGINE_SOURCES})
     target_compile_definitions(condition-engine-tests PRIVATE CONDITIONENGINE_STATIC)
     target_include_directories(condition-engine-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
     target_link_libraries(condition-engine-tests PRIVATE CommonLibSSE::CommonLibSSE spdlog::spdlog)

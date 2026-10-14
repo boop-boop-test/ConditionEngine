@@ -1,0 +1,520 @@
+// ValueTests.cpp - Out-of-game tests for value expressions (API v5): parsing, printing,
+// arithmetic, named values, pushed values and Compare. Nothing here touches game state.
+
+#include "ConditionEngine/ConditionEngine.h"
+#include "ConditionEngine/Availability.h"
+#include "ConditionEngine/Expression.h"
+#include "ConditionEngine/Values/PushedValues.h"
+#include "ConditionEngine/Values/ValueNodes.h"
+
+#include <cmath>
+#include <thread>
+
+namespace {
+    using json = nlohmann::json;
+    using namespace ConditionEngine;
+
+    using CheckFn = void (*)(bool ok, const std::string& what);
+    CheckFn Check = nullptr;
+
+    json ParseCondition(const std::string& src) {
+        Expression::ParseError error;
+        auto result = Expression::ParseToJson(src, &error);
+        Check(result.has_value(), "parse '" + src + "': " + error.message);
+        return result.value_or(json());
+    }
+
+    json ParseValue(const std::string& src) {
+        Expression::ParseError error;
+        auto result = Expression::ParseValueToJson(src, &error);
+        Check(result.has_value(), "parse value '" + src + "': " + error.message);
+        return result.value_or(json());
+    }
+
+    void ExpectConditionJson(const std::string& src, const json& expected) {
+        auto actual = ParseCondition(src);
+        Check(actual == expected, "json of '" + src + "'\n  got:      " + actual.dump() + "\n  expected: " + expected.dump());
+    }
+
+    void ExpectValueJson(const std::string& src, const json& expected) {
+        auto actual = ParseValue(src);
+        Check(actual == expected, "value json of '" + src + "'\n  got:      " + actual.dump() + "\n  expected: " + expected.dump());
+    }
+
+    void ExpectError(const std::string& src, const std::string& fragment, bool valueMode = false) {
+        Expression::ParseError error;
+        auto result = valueMode ? Expression::ParseValueToJson(src, &error) : Expression::ParseToJson(src, &error);
+        Check(!result.has_value(), "expected error for '" + src + "'");
+        Check(error.message.find(fragment) != std::string::npos,
+              "error for '" + src + "' should mention '" + fragment + "', got '" + error.message + "'");
+    }
+
+    // Condition text → json → text → json is stable
+    void ExpectConditionRoundTrip(const std::string& src, const std::string& expectedText) {
+        auto first = ParseCondition(src);
+        auto printed = Expression::FromJson(first);
+        Check(printed == expectedText, "print '" + src + "'\n  got:      " + printed + "\n  expected: " + expectedText);
+        Check(ParseCondition(printed) == first, "reparse '" + printed + "' changed the tree");
+    }
+
+    void ExpectValueRoundTrip(const std::string& src, const std::string& expectedText) {
+        auto first = ParseValue(src);
+        auto printed = Expression::ValueFromJson(first);
+        Check(printed == expectedText, "print value '" + src + "'\n  got:      " + printed + "\n  expected: " + expectedText);
+        Check(ParseValue(printed) == first, "reparse value '" + printed + "' changed the tree");
+    }
+
+    ValueResult Read(const std::string& src) {
+        std::string error;
+        auto value = Expression::CompileValueAny(src, &error);
+        Check(value != nullptr, "compile value '" + src + "': " + error);
+        if (!value) return ValueResult::Fail(ValueStatus::Error, error);
+        EvaluationContext context(nullptr);
+        return value->Read(context);
+    }
+
+    void ExpectRead(const std::string& src, double expected) {
+        const auto result = Read(src);
+        Check(result.Ok() && std::abs(result.value - expected) < 1e-9,
+              "read '" + src + "' = " + std::to_string(result.value) + " (" + ValueStatusName(result.status) + " " +
+                  result.reason + "), expected " + std::to_string(expected));
+    }
+
+    bool EvaluateCondition(const std::string& src) {
+        std::string error;
+        auto condition = Expression::CompileAny(src, &error);
+        Check(condition != nullptr, "compile '" + src + "': " + error);
+        EvaluationContext context(nullptr);
+        return condition && condition->Evaluate(context);
+    }
+
+    void Define(const std::string& name, const json& definition) {
+        std::string error;
+        auto def = NamedValueDef::Parse(name, definition, "value-tests", &error);
+        Check(def != nullptr, "define $" + name + ": " + error);
+        if (def) Registry::Get().RegisterNamedValue(def);
+    }
+
+    json Named(const std::string& name) { return {{"type", "NamedValue"}, {"name", name}}; }
+    json Math(const std::string& op, json args) { return {{"type", "Math"}, {"operator", op}, {"args", std::move(args)}}; }
+    json Compare(json left, const std::string& op, json right) {
+        return {{"type", "Compare"}, {"left", std::move(left)}, {"operator", op}, {"right", std::move(right)}};
+    }
+}
+
+void RunValueTests(CheckFn check) {
+    Check = check;
+    const json health = {{"type", "ActorValue"}, {"actorValue", "Health"}};
+    const json magicka = {{"type", "ActorValue"}, {"actorValue", "Magicka"}};
+    const json combat = {{"type", "Combat"}};
+    const json truthCombat = {{"type", "Truth"}, {"condition", combat}};
+
+    // ── Parsing ──────────────────────────────────────────────────────────────
+    ExpectConditionJson("$hunger > 80", Compare(Named("hunger"), ">", 80));
+    ExpectConditionJson("ActorValue(Health) * 2 < ActorValue(Magicka)",
+                        Compare(Math("*", {health, 2}), "<", magicka));
+    // The classic form is unchanged; a non-literal right side makes it a Compare
+    ExpectConditionJson("ActorValue(Health) < 30",
+                        {{"type", "ActorValue"}, {"actorValue", "Health"}, {"value", 30}, {"operator", "<"}});
+    ExpectConditionJson("ActorValue(Health) < 30 * 2", Compare(health, "<", Math("*", {30, 2})));
+    ExpectConditionJson("ActorValue(Health) >= -5",
+                        {{"type", "ActorValue"}, {"actorValue", "Health"}, {"value", -5}, {"operator", ">="}});
+    ExpectConditionJson("80 < $hunger", Compare(80, "<", Named("hunger")));
+    ExpectConditionJson("$flag", Compare(Named("flag"), "!=", 0));  // a bare value is "!= 0"
+    ExpectConditionJson("!$a > 3 && Combat",
+                        {{"type", "Logical"}, {"operator", "And"},
+                         {"children", {{{"type", "Logical"}, {"operator", "Not"},
+                                        {"children", {Compare(Named("a"), ">", 3)}}},
+                                       combat}}});
+    ExpectConditionJson("$x >= ${Threshold}", Compare(Named("x"), ">=", "${Threshold}"));
+
+    ExpectValueJson("$a - 1", Math("-", {Named("a"), 1}));
+    ExpectValueJson("$a -1", Math("-", {Named("a"), 1}));
+    ExpectValueJson("-$a", Math("neg", json::array({Named("a")})));
+    ExpectValueJson("-3", -3);
+    ExpectValueJson("2 + 3 * 4", Math("+", {2, Math("*", {3, 4})}));
+    ExpectValueJson("(2 + 3) * 4", Math("*", {Math("+", {2, 3}), 4}));
+    ExpectValueJson("clamp($x, 0, 1)", Math("clamp", {Named("x"), 0, 1}));
+    ExpectValueJson("MAX($a, $b, 2)", Math("max", {Named("a"), Named("b"), 2}));
+    ExpectValueJson("$hunger * (1 - Combat)", Math("*", {Named("hunger"), Math("-", {1, truthCombat})}));
+    ExpectValueJson("ActorValue(Health)", health);  // a numeric call reads its number
+    ExpectValueJson("Combat", truthCombat);          // a condition reads 0 / 1
+    ExpectValueJson("1.5e-3", 0.0015);
+
+    ExpectError("Sneaking > 1", "does not support comparisons");
+    ExpectError("Weather(Rainy) > $x", "does not support comparisons");
+    ExpectError("clamp(1, 2)", "takes 3", true);
+    ExpectError("max(1)", "two or more", true);
+    ExpectError("$ > 1", "value name");
+    ExpectError("$a >", "Expected a condition or value");
+    ExpectError("$a > 1 > 2", "Unexpected input");
+
+    // ── Printing ─────────────────────────────────────────────────────────────
+    ExpectConditionRoundTrip("$a + $b * 2 > 3", "$a + $b * 2 > 3");
+    ExpectConditionRoundTrip("($a + $b) * 2 > 3", "($a + $b) * 2 > 3");
+    ExpectConditionRoundTrip("ActorValue(Health) * 2 < ActorValue(Magicka)",
+                             "ActorValue(Health) * 2 < ActorValue(Magicka)");
+    ExpectConditionRoundTrip("$flag", "$flag != 0");
+    ExpectConditionRoundTrip("!($a > 1) || Combat", "!$a > 1 || Combat");
+    ExpectValueRoundTrip("$a - ($b - 1)", "$a - ($b - 1)");
+    ExpectValueRoundTrip("($a - $b) - 1", "$a - $b - 1");
+    ExpectValueRoundTrip("-($a + 1)", "-($a + 1)");
+    ExpectValueRoundTrip("Combat && Swimming", "Combat && Swimming");
+    ExpectValueRoundTrip("(ActorValue(Health) < 30) * 2", "(ActorValue(Health) < 30) * 2");
+    ExpectValueRoundTrip("(Combat || Swimming) + 1", "(Combat || Swimming) + 1");
+    ExpectValueRoundTrip("clamp($hunger * (1 - $light), 0, 100)", "clamp($hunger * (1 - $light), 0, 100)");
+
+    // ── Arithmetic ───────────────────────────────────────────────────────────
+    ExpectRead("2 + 3 * 4", 14);
+    ExpectRead("(2 + 3) * 4", 20);
+    ExpectRead("10 - 4 - 3", 3);
+    ExpectRead("max(1, 5, 3)", 5);
+    ExpectRead("min(4, -2)", -2);
+    ExpectRead("clamp(7, 0, 5)", 5);
+    ExpectRead("lerp(0, 10, 0.25)", 2.5);
+    ExpectRead("abs(-4)", 4);
+    ExpectRead("-(2)", -2);
+    ExpectRead("1 / 0", 0);  // division by zero reads 0
+    ExpectRead("true * 3", 3);
+    ExpectRead("false + 1", 1);
+    ExpectRead("{\"type\": \"Math\", \"operator\": \"+\", \"args\": [1, 2]}", 3);
+    {
+        std::string error;
+        auto bad = Value::FromJson(json::parse(R"({"type": "Math", "operator": "clamp", "args": [1, 2]})"), &error);
+        Check(!bad && error.find("takes 3") != std::string::npos, "Math arity checked from JSON: " + error);
+        bad = Value::FromJson("${Unset}", &error);
+        Check(!bad && error.find("unresolved parameter") != std::string::npos, "unresolved ${param} is not a value");
+    }
+
+    // ── Named values ─────────────────────────────────────────────────────────
+    auto& registry = Registry::Get();
+    Define("base", "2 + 3");
+    Define("doubled", "$base * 2");
+    ExpectRead("$doubled", 10);
+    ExpectRead("doubled", 10);  // a bare name compiles as $name
+    ExpectRead("$BASE", 5);     // names ignore case
+    Check(EvaluateCondition("$doubled > 9") && !EvaluateCondition("$doubled > 10"), "named values in conditions");
+
+    // A compiled $name follows redefinitions
+    {
+        std::string error;
+        auto doubled = Expression::CompileValueAny("$doubled", &error);
+        EvaluationContext context(nullptr);
+        Define("base", "7");
+        Check(doubled && doubled->Read(context).value == 14, "redefinition reaches compiled references");
+    }
+
+    {
+        const auto missing = Read("$nothing_here");
+        Check(missing.status == ValueStatus::Unavailable && missing.reason.find("no value named") != std::string::npos,
+              "unknown name reads Unavailable");
+        Check(!EvaluateCondition("$nothing_here > -1000") && !EvaluateCondition("$nothing_here < 1000"),
+              "comparisons with an unavailable side are false");
+    }
+
+    Define("loop_a", "$loop_b + 1");
+    Define("loop_b", "$loop_a + 1");
+    {
+        const auto loop = Read("$loop_a");
+        Check(loop.status == ValueStatus::Error && loop.reason.find("circular") != std::string::npos,
+              "circular named values report an error");
+        std::string error;
+        auto value = Expression::CompileValueAny("$loop_a", &error);
+        Check(value && HasDependency(value->GetEventDependencies(), EventDependency::Value),
+              "dependencies of a cycle terminate");
+    }
+
+    Define("with_fallback", json{{"expr", "$nothing_here"}, {"fallback", 7}, {"unit", "%"}, {"range", {0, 100}}});
+    {
+        const auto r = Read("$with_fallback");
+        Check(r.status == ValueStatus::Unavailable && r.value == 7, "fallback is read while unavailable");
+        auto def = registry.FindNamedValue("with_fallback");
+        Check(def && def->info.unit == "%" && def->info.max == 100.0, "unit and range parsed");
+    }
+
+    Define("gated", json{{"expr", "5"}, {"enabledWhen", "false"}});
+    Check(Read("$gated").status == ValueStatus::Unavailable, "enabledWhen false makes the value unavailable");
+
+    // Scope inference
+    Define("world_hour", "Time");
+    Define("actor_health", "ActorValue(Health, usePercentage=true)");
+    Define("constant_two", "2");
+    Define("forced_actor", json{{"expr", "2"}, {"scope", "actor"}});
+    Check(registry.FindNamedValue("world_hour")->global, "Time is global");
+    Check(!registry.FindNamedValue("actor_health")->global, "actor values are per actor");
+    Check(registry.FindNamedValue("constant_two")->global, "literals are global");
+    Check(!registry.FindNamedValue("forced_actor")->global, "scope override wins");
+
+    {
+        std::string error;
+        Check(!NamedValueDef::Parse("bad name", "1", "t", &error), "names must be identifiers");
+        Check(!NamedValueDef::Parse("empty", json::object(), "t", &error) && error.find("expr") != std::string::npos,
+              "a definition needs an expression or pushed");
+        Check(!NamedValueDef::Parse("broken", "1 +", "t", &error), "invalid expressions are rejected");
+    }
+
+    // Availability: unknown names suspend, known ones are ready
+    {
+        std::string error;
+        auto known = Expression::CompileValueAny("$doubled + 1", &error);
+        auto unknown = Expression::CompileValueAny("$nothing_here + 1", &error);
+        Check(known && Availability::Get().CheckValue(*known).Ready(), "known named value is available");
+        Check(unknown && !Availability::Get().CheckValue(*unknown).Ready(), "unknown named value is unavailable");
+        auto compare = Expression::CompileAny("$nothing_here > 1", &error);
+        Check(compare && !Availability::Get().Check(*compare).Ready(), "Compare walks its values for availability");
+    }
+
+    // requiresDlls: the DLL must be loaded in this process
+    Define("needs_kernel", json{{"expr", "1"}, {"requiresDlls", {"kernel32.dll"}}});
+    Define("needs_missing", json{{"expr", "1"}, {"requiresDlls", {"NoSuchNative.dll"}}});
+    {
+        std::string error;
+        auto present = Expression::CompileValueAny("$needs_kernel", &error);
+        auto missing = Expression::CompileValueAny("$needs_missing", &error);
+        Check(present && Availability::Get().CheckValue(*present).Ready(), "a loaded DLL satisfies requiresDlls");
+        const auto status = missing ? Availability::Get().CheckValue(*missing) : AvailabilityStatus{};
+        Check(!status.Ready() && status.reason.find("NoSuchNative.dll") != std::string::npos,
+              "a missing DLL makes the value unavailable: " + status.reason);
+    }
+
+    // ── Pushed values ────────────────────────────────────────────────────────
+    auto& pushed = PushedValues::Get();
+    Check(Read("$mood").status == ValueStatus::Unavailable, "never pushed = unavailable");
+    Check(pushed.Set(nullptr, "mood", 0.5), "push to an undeclared name");
+    ExpectRead("$mood", 0.5);
+    Check(registry.FindNamedValue("mood") && registry.FindNamedValue("mood")->source == "implicit",
+          "push registers an implicit value");
+    Check(!pushed.Set(nullptr, "not valid", 1), "invalid names cannot be pushed");
+
+    Check(pushed.SetGlobal("world_mood", 3), "global push");
+    ExpectRead("$world_mood", 3);
+
+    Define("hungry", json{{"pushed", {{"default", 1}, {"timeoutSeconds", 600}}}, {"range", {0, 1}}});
+    ExpectRead("$hungry", 1);  // the pushed default before any push
+    pushed.Set(nullptr, "hungry", 0.25);
+    ExpectRead("$hungry", 0.25);
+    pushed.Set(nullptr, "hungry", 0.75, 0.001);
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    ExpectRead("$hungry", 1);  // timed out, back to the default
+
+    // A push overrides an expression while active
+    Define("overridable", json{{"expr", "10"}, {"pushed", true}});
+    ExpectRead("$overridable", 10);
+    pushed.Set(nullptr, "overridable", 4);
+    ExpectRead("$overridable", 4);
+    pushed.Clear(nullptr, "overridable");
+    ExpectRead("$overridable", 10);
+
+    // graceSeconds holds the last good value after a failed read
+    Define("grace_source", json{{"pushed", true}});
+    Define("graced", json{{"expr", "$grace_source"}, {"graceSeconds", 60}});
+    Define("ungraced", json{{"expr", "$grace_source"}});
+    pushed.Set(nullptr, "grace_source", 5);
+    ExpectRead("$graced", 5);
+    pushed.Clear(nullptr, "grace_source");
+    ExpectRead("$graced", 5);
+    Check(Read("$ungraced").status == ValueStatus::Unavailable, "without grace a failed read is unavailable");
+
+    // Reasons for a missing push
+    Define("reasoned", json{{"pushed", true}});
+    Check(Read("$reasoned").reason.find("nothing pushed") != std::string::npos, "never pushed says so");
+    pushed.Set(nullptr, "reasoned", 1, 0.001);
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    Check(Read("$reasoned").reason.find("expired") != std::string::npos, "an expired push says so: " + Read("$reasoned").reason);
+    pushed.Set(nullptr, "reasoned", 1);
+    pushed.Clear(nullptr, "reasoned");
+    Check(Read("$reasoned").reason.find("cleared") != std::string::npos, "a cleared push says so");
+
+    pushed.ClearAll();
+    Check(Read("$mood").status == ValueStatus::Unavailable, "ClearAll forgets pushes (nothing is saved)");
+
+    // ── Three-valued enabledWhen: waiting is not "disabled" ─────────────────
+    TypeBuilder("TestPendingValue", "Test pending value", "other")
+        .Value({})
+        .Compare("value")
+        .Factory([](const json& j) {
+            return std::make_unique<CallbackValueCondition>(
+                "pending", [](const EvaluationContext&) { return ValueResult::Fail(ValueStatus::Pending, "waiting for test"); },
+                EventDependency::Value, j, "value");
+        })
+        .Register(registry);
+    Define("tri_pending", json{{"expr", "5"}, {"enabledWhen", "TestPendingValue == 0"}});
+    Define("tri_false", json{{"expr", "5"}, {"enabledWhen", "false && TestPendingValue == 0"}});
+    Define("tri_true", json{{"expr", "5"}, {"enabledWhen", "true || TestPendingValue == 0"}});
+    Define("tri_not", json{{"expr", "5"}, {"enabledWhen", "!(TestPendingValue == 0)"}});
+    Define("tri_compare", json{{"expr", "5"}, {"enabledWhen", "TestPendingValue * 2 > 1"}});
+    {
+        const auto pending = Read("$tri_pending");
+        Check(pending.status == ValueStatus::Pending && pending.reason == "waiting for test",
+              "undecided enabledWhen reads Pending with its reason (" + pending.reason + ")");
+        Check(Read("$tri_false").status == ValueStatus::Unavailable, "false && pending is decided false");
+        ExpectRead("$tri_true", 5);  // true || pending is decided true
+        Check(Read("$tri_not").status == ValueStatus::Pending, "not pending stays pending");
+        Check(Read("$tri_compare").status == ValueStatus::Pending, "Compare over a pending value is pending");
+        Check(Read("TestPendingValue == 0").status == ValueStatus::Pending, "a pending condition read as a value is pending");
+        Check(!EvaluateCondition("TestPendingValue == 0"), "plain Evaluate still treats pending as false");
+
+        // NTJH finding: a comparison over a named value whose enabledWhen and expr are both
+        // pending must read Pending, not OK 0
+        Define("tri_both", json{{"expr", "TestPendingValue"}, {"enabledWhen", "TestPendingValue == 0"}});
+        Check(Read("$tri_both").status == ValueStatus::Pending, "named value with pending gate and expr is pending");
+        Check(Read("$tri_both > 80").status == ValueStatus::Pending, "a comparison over it read as a value is pending");
+
+        // Unavailable propagates instead of collapsing to OK 0
+        const auto unavailable = Read("$nothing_here > 1");
+        Check(unavailable.status == ValueStatus::Unavailable && unavailable.reason.find("no value named") != std::string::npos,
+              "a comparison over an unavailable value reads unavailable with its reason: " + unavailable.reason);
+        Define("tri_unreadable_gate", json{{"expr", "5"}, {"enabledWhen", "$nothing_here > 0"}});
+        const auto gate = Read("$tri_unreadable_gate");
+        Check(gate.status == ValueStatus::Unavailable && gate.reason.find("enabledWhen cannot be read") != std::string::npos,
+              "an unreadable enabledWhen says so: " + gate.reason);
+        Define("tri_or_unreadable", json{{"expr", "5"}, {"enabledWhen", "true || $nothing_here > 0"}});
+        ExpectRead("$tri_or_unreadable", 5);  // true || unavailable is decided
+        Check(Read("!($nothing_here > 0)").status == ValueStatus::Unavailable, "not unavailable stays unavailable");
+        Check(Read("TestPendingValue == 0 && $nothing_here > 0").status == ValueStatus::Pending, "pending wins over unavailable");
+    }
+
+    // ── PapyrusCall (syntax only; calls need the game) ──────────────────────
+    ExpectConditionJson("PapyrusCall(SeverActionsNative, Native_Survival_GetHunger) > 80",
+                        {{"type", "PapyrusCall"}, {"script", "SeverActionsNative"},
+                         {"function", "Native_Survival_GetHunger"}, {"value", 80}, {"operator", ">"}});
+    ExpectValueJson("PapyrusCall(SeverActions_Survival, GetHunger, form=\"0xD62|SeverActions.esp\", interval=2)",
+                    {{"type", "PapyrusCall"}, {"script", "SeverActions_Survival"}, {"function", "GetHunger"},
+                     {"form", "0xD62|SeverActions.esp"}, {"interval", 2}});
+    {
+        std::string error;
+        auto condition = Expression::CompileAny("PapyrusCall(SeverActionsNative, Native_Survival_IsExcluded) == 0", &error);
+        Check(condition && Expression::ToExpression(*condition) ==
+                               "PapyrusCall(SeverActionsNative, Native_Survival_IsExcluded) == 0.0",
+              "PapyrusCall prints: " + (condition ? Expression::ToExpression(*condition) : error));
+        auto value = Expression::CompileValueAny("PapyrusCall(SeverActionsNative, Native_Survival_GetHunger) / 100", &error);
+        Check(value && HasDependency(value->GetEventDependencies(), EventDependency::Value),
+              "PapyrusCall values depend on Value (results arrive as events)");
+        // The SeverActions definition shared with NTJH must parse
+        Define("vampire_hunger_example", json::parse(R"json({
+            "label": "Vampire hunger (SeverActions)", "unit": "%", "range": [0, 100],
+            "expr": "PapyrusCall(SeverActionsNative, Native_Survival_GetHunger, interval=2)",
+            "enabledWhen": "ScriptValue(SeverActions_Survival, Enabled, bool, true, form=\"0xD62|SeverActions.esp\") && ScriptValue(SeverActions_Survival, HungerEnabled, bool, true, form=\"0xD62|SeverActions.esp\") && PapyrusCall(SeverActionsNative, Native_Survival_IsExcluded, interval=10) == 0",
+            "requiresPlugins": ["SeverActions.esp"], "graceSeconds": 30, "fallback": 0
+        })json"));
+        auto hungerDef = Registry::Get().FindNamedValue("vampire_hunger_example");
+        Check(hungerDef && !hungerDef->global && hungerDef->enabledWhen && hungerDef->graceSeconds == 30.0,
+              "SeverActions hunger definition parses as a per-actor value");
+        auto plugin = Expression::CompileValueAny(
+            "PapyrusCall(SeverActions_Survival, GetHunger, form=\"0xD62|SeverActions.esp\")", &error);
+        Check(plugin && !Availability::Get().CheckValue(*plugin).Ready(),
+              "a bound form's plugin is required (SeverActions.esp is not loaded in tests)");
+    }
+
+    // ── Compare and parameters ───────────────────────────────────────────────
+    {
+        std::string error;
+        auto condition = Expression::CompileAny("$doubled >= ${Threshold}", &error);
+        Check(condition != nullptr, "compile parameterized Compare: " + error);
+        if (condition) {
+            Check(!condition->Validate().empty(), "unresolved parameter is a validation error");
+            auto resolved = condition->ResolveParameters({{"Threshold", "14"}});
+            EvaluationContext context(nullptr);
+            Check(resolved && resolved->Evaluate(context), "Compare resolves ${param}");
+            Check(resolved && resolved->ToJson()["right"] == 14, "resolved parameter is a number");
+        }
+        auto again = Expression::CompileAny(Expression::ToExpression(*Expression::CompileAny("$a * 2 <= 3", &error)), &error);
+        Check(again && Expression::ToExpression(*again) == "$a * 2 <= 3", "Compare prints and recompiles");
+    }
+
+    // ── Catalog ──────────────────────────────────────────────────────────────
+    {
+        const auto catalog = registry.GetCatalog();
+        Check(catalog.contains("namedValues") && catalog["namedValues"].is_array(), "catalog lists named values");
+        bool sawActorValue = false;
+        for (const auto& t : catalog["types"]) {
+            if (t["name"] == "ActorValue") sawActorValue = t.contains("value");
+        }
+        Check(sawActorValue, "numeric types carry value metadata");
+        bool sawDoubled = false;
+        for (const auto& v : catalog["namedValues"]) sawDoubled |= v["name"] == "doubled";
+        Check(sawDoubled, "named value appears in the catalog");
+    }
+
+    // ── Catalog organisation (v6) ────────────────────────────────────────────
+    {
+        std::string error;
+        Check(registry.RegisterCategory({"survival", "Survival", 50, "", "", "Food, sleep, cold"}, "SeverActions", &error),
+              "register a topical category");
+        Check(registry.RegisterCategory({"survival", "Hunger Things", 60, "", "🍖", ""}, "NoTalkJustHands", &error),
+              "registering an existing id is reuse");
+        Check(registry.RegisterCategory({"survival.hunger", "", 10, "survival"}, "SeverActions", &error),
+              "a child category with a label from its id");
+        Check(registry.RegisterCategory({"loop_a", "A", 1, "loop_b"}, "t", &error) &&
+                  !registry.RegisterCategory({"loop_b", "B", 1, "loop_a"}, "t", &error),
+              "a parent cycle is refused");
+        registry.RegisterSource("NoTalkJustHands", "No Talk Just Hands");
+
+        Define("cat_hunger", json{{"expr", "3"}, {"category", "survival.hunger"}, {"owner", "SeverActions"},
+                                  {"tags", {"food"}}, {"icon", "🩸"}, {"description", "How hungry"}});
+        Define("cat_private", json{{"expr", "1"}, {"category", "relationships"}, {"owner", "NoTalkJustHands"},
+                                   {"offer", "owner"}});
+        NamedConditionInfo info;
+        info.source = "value-tests";
+        info.owner = "NoTalkJustHands";
+        info.label = "Talking";
+        info.category = "speech";
+        registry.RegisterNamed("cat_talking", std::make_shared<ConstantCondition>(true), info);
+
+        auto find = [](const json& list, const char* key, const std::string& id) -> json {
+            for (const auto& item : list) {
+                if (item.value(key, "") == id) return item;
+            }
+            return nullptr;
+        };
+        const auto all = registry.GetCatalog();
+        const auto survival = find(all["categories"], "id", "survival");
+        Check(survival.is_object() && survival["label"] == "Survival" && survival["source"] == "SeverActions" &&
+                  survival["description"] == "Food, sleep, cold" && survival["icon"] == "🍖",
+              "first registrant keeps the label, reuse fills the icon: " + survival.dump());
+        const auto hunger = find(all["categories"], "id", "survival.hunger");
+        Check(hunger.is_object() && hunger["label"] == "Hunger" && hunger["parent"] == "survival", "child category: " + hunger.dump());
+        const auto relationships = find(all["categories"], "id", "relationships");
+        Check(relationships.is_object() && relationships["label"] == "Relationships" && !relationships.contains("parent"),
+              "an unknown category id is created at the top level, labelled from the id");
+
+        const auto value = find(all["namedValues"], "name", "cat_hunger");
+        Check(value.is_object() && value["category"] == "survival.hunger" && value["source"] == "SeverActions" &&
+                  value["sourceLabel"] == "SeverActions" && value["offer"] == "everywhere" && value["icon"] == "🩸",
+              "named value carries category, origin and offer: " + value.dump());
+        const auto tags = value.value("tags", json::array());
+        Check(std::find(tags.begin(), tags.end(), "food") != tags.end() &&
+                  std::find(tags.begin(), tags.end(), "value") != tags.end() &&
+                  std::find(tags.begin(), tags.end(), "global") != tags.end(),
+              "free and automatic tags: " + tags.dump());
+        const auto talking = find(all["namedConditions"], "id", "cat_talking");
+        Check(talking.is_object() && talking["label"] == "Talking" && talking["category"] == "speech" &&
+                  talking["sourceLabel"] == "No Talk Just Hands",
+              "named condition carries metadata and the origin label: " + talking.dump());
+        const auto level = find(all["types"], "name", "Level");
+        Check(level.is_object() && level["source"] == "ConditionEngine" && level["category"] == "actor" &&
+                  level["offer"] == "everywhere",
+              "built-in types keep their category and show ConditionEngine as origin");
+        const auto logical = find(all["types"], "name", "Logical");
+        Check(logical.is_object() && logical["offer"] == "nowhere" && logical["hidden"] == true, "hidden = offer nowhere");
+        Check(find(all["sources"], "id", "NoTalkJustHands").value("label", "") == "No Talk Just Hands",
+              "sources list carries labels");
+
+        // A picker's view
+        const auto other = registry.GetCatalog(json{{"for", "DressCode"}});
+        Check(find(other["namedValues"], "name", "cat_private").is_null(), "owner-only values are absent from other pickers");
+        Check(find(other["types"], "name", "Logical").is_null(), "expression-only types are not offered");
+        Check(find(other["namedValues"], "name", "cat_hunger").is_object(), "everywhere values are offered");
+        const auto own = registry.GetCatalog(json{{"for", "notalkjusthands"}});
+        Check(find(own["namedValues"], "name", "cat_private").is_object(), "owner-only values are offered to their owner");
+        const auto everything = registry.GetCatalog(json{{"for", "DressCode"}, {"offered", false}});
+        Check(find(everything["namedValues"], "name", "cat_private").is_object(), "offered:false shows everything");
+        const auto valuesOnly = registry.GetCatalog(json{{"include", {"values"}}});
+        Check(valuesOnly["types"].empty() && !valuesOnly["namedValues"].empty(), "include limits the sections");
+
+        registry.UnregisterNamed("cat_talking");
+    }
+
+    Check(registry.UnregisterSource("value-tests") > 0, "named values unregister by source");
+    Check(registry.FindNamedValue("doubled") == nullptr, "named value removed");
+}

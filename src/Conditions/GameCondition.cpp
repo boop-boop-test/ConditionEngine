@@ -161,6 +161,7 @@ namespace ConditionEngine {
                 result.error = "'" + function_ + "' cannot be used as a condition";
             } else {
                 result.functionId = static_cast<std::uint16_t>(command - first);
+                result.function = command->conditionFunction;
                 result.ok = true;
                 const auto declared = std::min<std::uint16_t>(command->numParams, 2);
                 for (std::uint16_t i = 0; i < declared && result.ok; ++i) {
@@ -210,6 +211,20 @@ namespace ConditionEngine {
 
         RE::ConditionCheckParams params(subject, player);
         return item.IsTrue(params);
+    }
+
+    ValueResult GameCondition::ReadValue(const EvaluationContext& context) const {
+        const auto& compiled = Compile();
+        if (!compiled.ok || !compiled.function) return ValueResult::Fail(ValueStatus::Error, compiled.error);
+
+        // Subject runs on the actor; Target and Player run on the player, as in Evaluate
+        RE::TESObjectREFR* ref = runOn_ == RunOn::Subject ? static_cast<RE::TESObjectREFR*>(context.GetActor())
+                                                          : RE::PlayerCharacter::GetSingleton();
+        if (!ref) return ValueResult::Fail(ValueStatus::Unavailable, "no actor");
+
+        double result = 0.0;
+        compiled.function(ref, compiled.params[0], compiled.params[1], result);
+        return ValueResult::Of(result);
     }
 
     std::string GameCondition::GetDescription() const {

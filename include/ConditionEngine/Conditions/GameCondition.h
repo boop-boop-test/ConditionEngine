@@ -31,6 +31,8 @@ namespace ConditionEngine {
                       RunOn runOn = RunOn::Subject);
 
         bool Evaluate(const EvaluationContext& context) const override;
+        // The function's raw result (GetLevel -> 20, GetActorValuePercent -> 0.3)
+        ValueResult ReadValue(const EvaluationContext& context) const override;
         std::string GetDescription() const override;
         nlohmann::json ToJson() const override;
         std::unique_ptr<Condition> Clone() const override;
@@ -44,6 +46,7 @@ namespace ConditionEngine {
             bool ok = false;
             std::string error;
             std::uint16_t functionId = 0;
+            RE::SCRIPT_FUNCTION::Condition_t* function = nullptr;  // raw result, for values
             void* params[2] = {nullptr, nullptr};
         };
 

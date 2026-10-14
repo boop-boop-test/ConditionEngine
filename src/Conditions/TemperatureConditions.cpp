@@ -7,6 +7,10 @@ namespace ConditionEngine {
     TemperatureCondition::TemperatureCondition(float temp, ComparisonOperator op)
         : targetTemperature(temp), operation(op) {}
 
+    ValueResult TemperatureCondition::ReadValue(const EvaluationContext& context) const {
+        return ValueResult::Of(context.GetTemperature());
+    }
+
     bool TemperatureCondition::Evaluate(const EvaluationContext& context) const {
         float currentTemp = context.GetTemperature();
         return CompareFloat(currentTemp, targetTemperature, operation);

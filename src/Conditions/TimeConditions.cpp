@@ -11,6 +11,10 @@ namespace ConditionEngine {
     TimeCondition::TimeCondition(float startHour, float endHour, ComparisonOperator op)
         : startHour(startHour), endHour(endHour), operation(op), isRange(startHour != endHour) {}
 
+    ValueResult TimeCondition::ReadValue(const EvaluationContext& context) const {
+        return ValueResult::Of(context.GetCurrentTime());  // game hour, 0 to 24
+    }
+
     bool TimeCondition::Evaluate(const EvaluationContext& context) const {
         float currentTime = context.GetCurrentTime();
         
@@ -62,6 +66,12 @@ namespace ConditionEngine {
 
     DayOfWeekCondition::DayOfWeekCondition(std::uint8_t allowedDaysMask)
         : allowedDays(allowedDaysMask) {}
+
+    ValueResult DayOfWeekCondition::ReadValue(const EvaluationContext&) const {
+        auto* calendar = RE::Calendar::GetSingleton();
+        if (!calendar) return ValueResult::Fail(ValueStatus::Unavailable, "calendar not available");
+        return ValueResult::Of(calendar->GetDayOfWeek());  // 0 = Sundas
+    }
 
     bool DayOfWeekCondition::Evaluate(const EvaluationContext& context) const {
         auto* calendar = RE::Calendar::GetSingleton();
@@ -116,6 +126,12 @@ namespace ConditionEngine {
     MonthCondition::MonthCondition(std::uint16_t allowedMonthsMask)
         : allowedMonths(allowedMonthsMask) {}
 
+    ValueResult MonthCondition::ReadValue(const EvaluationContext&) const {
+        auto* calendar = RE::Calendar::GetSingleton();
+        if (!calendar) return ValueResult::Fail(ValueStatus::Unavailable, "calendar not available");
+        return ValueResult::Of(static_cast<int>(calendar->GetMonth()));  // 0 = Morning Star
+    }
+
     bool MonthCondition::Evaluate(const EvaluationContext& context) const {
         auto* calendar = RE::Calendar::GetSingleton();
         if (!calendar) return false;
@@ -168,6 +184,12 @@ namespace ConditionEngine {
 
     DayOfMonthCondition::DayOfMonthCondition(std::uint32_t allowedDaysMask)
         : allowedDays(allowedDaysMask) {}
+
+    ValueResult DayOfMonthCondition::ReadValue(const EvaluationContext&) const {
+        auto* calendar = RE::Calendar::GetSingleton();
+        if (!calendar) return ValueResult::Fail(ValueStatus::Unavailable, "calendar not available");
+        return ValueResult::Of(static_cast<int>(calendar->GetDay()));  // 1 to 31
+    }
 
     bool DayOfMonthCondition::Evaluate(const EvaluationContext& context) const {
         auto* calendar = RE::Calendar::GetSingleton();

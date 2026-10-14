@@ -19,24 +19,25 @@ namespace ConditionEngine {
         EvaluationContext(const EvaluationContext&) = default;
         EvaluationContext& operator=(const EvaluationContext&) = default;
 
-        // Re-snapshot game state for the current actor
+        // Re-snapshot game state for the current actor. The snapshot is taken lazily, on
+        // the first getter call, so contexts that only read values stay cheap.
         void UpdateFromGameState();
 
         RE::Actor* GetActor() const { return actor; }
-        RE::BGSLocation* GetCurrentLocation() const { return currentLocation; }
-        RE::TESWeather* GetCurrentWeather() const { return currentWeather; }
-        float GetCurrentTime() const { return currentTime; }
-        int GetCurrentDay() const { return currentDay; }
-        int GetCurrentMonth() const { return currentMonth; }
-        float GetTemperature() const { return temperature; }
+        RE::BGSLocation* GetCurrentLocation() const { Snapshot(); return currentLocation; }
+        RE::TESWeather* GetCurrentWeather() const { Snapshot(); return currentWeather; }
+        float GetCurrentTime() const { Snapshot(); return currentTime; }
+        int GetCurrentDay() const { Snapshot(); return currentDay; }
+        int GetCurrentMonth() const { Snapshot(); return currentMonth; }
+        float GetTemperature() const { Snapshot(); return temperature; }
 
         // Poll-based actor state getters
-        bool IsSwimming() const { return isSwimming; }
-        bool IsSleeping() const { return isSleeping; }
-        bool IsMounted() const { return isMounted; }
-        bool IsInWater() const { return isInWater; }
-        bool IsInLoveScene() const { return isInLoveScene; }
-        bool IsInCombat() const { return isInCombat; }
+        bool IsSwimming() const { Snapshot(); return isSwimming; }
+        bool IsSleeping() const { Snapshot(); return isSleeping; }
+        bool IsMounted() const { Snapshot(); return isMounted; }
+        bool IsInWater() const { Snapshot(); return isInWater; }
+        bool IsInLoveScene() const { Snapshot(); return isInLoveScene; }
+        bool IsInCombat() const { Snapshot(); return isInCombat; }
 
         // Cache for expensive lookups
         mutable std::unordered_map<std::string, std::variant<bool, int, float, std::string>> cache;
@@ -45,24 +46,33 @@ namespace ConditionEngine {
         mutable std::unordered_map<std::string, bool> ruleMemo;
         mutable std::unordered_set<std::string> rulesInProgress;
 
+        // Named-value ($name) cycle detection, lowercase names
+        mutable std::unordered_set<std::string> valuesInProgress;
+
         // Opaque pointer forwarded to C-API custom condition callbacks.
         void* userData = nullptr;
 
     private:
-        RE::Actor* actor = nullptr;
-        RE::BGSLocation* currentLocation = nullptr;
-        RE::TESWeather* currentWeather = nullptr;
-        float currentTime = 0.0f;
-        int currentDay = 0;
-        int currentMonth = 0;
-        float temperature = 20.0f;
+        void Snapshot() const {
+            if (!snapshotted) TakeSnapshot();
+        }
+        void TakeSnapshot() const;
 
-        bool isSwimming = false;
-        bool isSleeping = false;
-        bool isMounted = false;
-        bool isInWater = false;
-        bool isInLoveScene = false;
-        bool isInCombat = false;
+        RE::Actor* actor = nullptr;
+        mutable bool snapshotted = false;
+        mutable RE::BGSLocation* currentLocation = nullptr;
+        mutable RE::TESWeather* currentWeather = nullptr;
+        mutable float currentTime = 0.0f;
+        mutable int currentDay = 0;
+        mutable int currentMonth = 0;
+        mutable float temperature = 20.0f;
+
+        mutable bool isSwimming = false;
+        mutable bool isSleeping = false;
+        mutable bool isMounted = false;
+        mutable bool isInWater = false;
+        mutable bool isInLoveScene = false;
+        mutable bool isInCombat = false;
     };
 
     // Returns true when the actor is in a sit/sleep state between "sleeping" and "want to wake"

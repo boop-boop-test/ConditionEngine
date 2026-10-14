@@ -32,11 +32,8 @@ namespace ConditionEngine {
     FactionCondition::FactionCondition(const std::string& factionName, int rank, ComparisonOperator op)
         : factionName(factionName), rank(rank), operation(op) {}
 
-    bool FactionCondition::Evaluate(const EvaluationContext& context) const {
-        auto actor = context.GetActor();
-        if (!actor) return false;
-
-        // Lazy-cache the faction pointer on first eval
+    RE::TESFaction* FactionCondition::ResolveFaction() const {
+        // Lazy-cache the faction pointer on first use
         if (!cacheAttempted) {
             cacheAttempted = true;
             if (!factionName.empty()) {
@@ -59,6 +56,23 @@ namespace ConditionEngine {
                 SKSE::log::warn("FactionCondition: Could not resolve faction '{}'", factionName);
             }
         }
+
+        return cachedFaction;
+    }
+
+    ValueResult FactionCondition::ReadValue(const EvaluationContext& context) const {
+        auto actor = context.GetActor();
+        if (!actor) return ValueResult::Fail(ValueStatus::Unavailable, "no actor");
+        auto* faction = ResolveFaction();
+        if (!faction) return ValueResult::Fail(ValueStatus::Unavailable, "faction not found: " + factionName);
+        return ValueResult::Of(actor->GetFactionRank(faction, false));  // -1 = not a member
+    }
+
+    bool FactionCondition::Evaluate(const EvaluationContext& context) const {
+        auto actor = context.GetActor();
+        if (!actor) return false;
+
+        ResolveFaction();
 
         if (!cachedFaction) {
             CE_TRACE(info, "FactionCondition: cachedFaction is null for '{}', returning false", factionName);

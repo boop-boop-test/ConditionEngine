@@ -13,6 +13,7 @@ namespace ConditionEngine {
         GlobalVariableCondition(const std::string& globalName, float value, ComparisonOperator op);
         
         bool Evaluate(const EvaluationContext& context) const override;
+        ValueResult ReadValue(const EvaluationContext& context) const override;
         std::string GetDescription() const override;
         nlohmann::json ToJson() const override;
         std::unique_ptr<Condition> Clone() const override;

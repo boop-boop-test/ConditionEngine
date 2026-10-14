@@ -36,6 +36,7 @@ namespace ConditionEngine {
         NamedCondition,  // reference to a named condition / rule
         Conditions,      // nested child conditions (Logical)
         Custom,          // host-specific editor named by `widget`; value is opaque JSON
+        Value,           // value expression node (see Value.h): number, ${param} or {"type": ...}
     };
 
     struct FieldOption {
@@ -68,10 +69,19 @@ namespace ConditionEngine {
         FieldSchema Custom() const { auto c = *this; c.allowCustom = true; return c; }
     };
 
+    // A picker group. Categories form a tree through `parent` (empty = top level);
+    // ids are flat strings, dotted ids ("ntjh.face") are only a convention.
     struct CategoryInfo {
         std::string id;
         std::string label;
         int order = 100;
+        std::string parent;
+        std::string icon;
+        std::string description;
+        std::string source;  // owner; built-in categories are "ConditionEngine"
+
+        // {"id", "label", "order", "parent", "icon", "description", "source"}
+        nlohmann::json ToJson() const;
     };
 
     // Field builders
@@ -89,6 +99,7 @@ namespace ConditionEngine {
         FieldSchema Comparison(std::string key = "operator", std::string label = "Comparison", std::string def = ">=");
         FieldSchema Named(std::string key, std::string label);
         FieldSchema Children(std::string key, std::string label);
+        FieldSchema ValueExpr(std::string key, std::string label);
         FieldSchema Widget(std::string key, std::string label, std::string widget);
 
         // Options from plain values (label = value)

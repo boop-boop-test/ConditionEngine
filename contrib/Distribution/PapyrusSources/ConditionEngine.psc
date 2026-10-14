@@ -55,3 +55,32 @@ Int      Function Watch(Actor akActor, String asExpression, String asEventName, 
 ;
          Function SetPollInterval(Float afSeconds) Global Native
 Float    Function GetPollInterval() Global Native
+
+;
+; Values - numbers read from the game, combined with arithmetic:
+;   "ActorValue(Health, usePercentage=true)", "$vampire_hunger", "clamp($hunger * (1 - $light), 0, 100)"
+; Conditions compare them: Evaluate(akActor, "$vampire_hunger > 80").
+; asNameOrExpr is value text or a bare named-value name ("vampire_hunger").
+;
+; GetValue is latent (waits one frame). An unavailable value returns its fallback, or 0.
+Float    Function GetValue(Actor akActor, String asNameOrExpr) Global Native
+
+; Pushed values: set a named value from a script (e.g. a SkyrimNet action). Pushing a
+; name nobody declared declares it. afTimeoutSeconds 0 = the value's default timeout
+; (none when it has none); afterwards it reverts to its expression or default.
+; Pushed values are not saved - every load starts clean, so push again after loading.
+Bool     Function SetValue(Actor akActor, String asName, Float afValue, Float afTimeoutSeconds = 0.0) Global Native
+Bool     Function SetGlobalValue(String asName, Float afValue, Float afTimeoutSeconds = 0.0) Global Native
+Bool     Function ClearValue(Actor akActor, String asName) Global Native
+Bool     Function ClearGlobalValue(String asName) Global Native
+
+; Named values ($name). asDefinition is value text or a JSON definition
+; ({"expr", "label", "unit", "range", "fallback", "enabledWhen", "pushed", ...}).
+; Script-registered values are cleared on every load - register them again from OnPlayerLoadGame.
+Bool     Function RegisterNamedValue(String asName, String asDefinition) Global Native
+
+; Value watches - sends a mod event when the value moves by afMinStep (any change when 0):
+;   RegisterForModEvent(asEventName, "OnValueChanged")
+;   Event OnValueChanged(String eventName, String watchId, Float value, Form akActor)
+; afPollIntervalSeconds: 0 = global default, below 0 = only on events. Stop with Unwatch.
+Int      Function WatchValue(Actor akActor, String asNameOrExpr, String asEventName, Float afMinStep = 0.0, Float afPollIntervalSeconds = 0.0, Bool abFireImmediately = False) Global Native

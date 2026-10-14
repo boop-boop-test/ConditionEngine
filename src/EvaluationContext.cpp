@@ -4,13 +4,15 @@
 namespace ConditionEngine {
 
     EvaluationContext::EvaluationContext(RE::Actor* actor)
-        : actor(actor) {
-        if (actor) {
-            UpdateFromGameState();
-        }
-    }
+        : actor(actor) {}
 
     void EvaluationContext::UpdateFromGameState() {
+        snapshotted = false;
+        cache.clear();
+    }
+
+    void EvaluationContext::TakeSnapshot() const {
+        snapshotted = true;
         if (!actor) return;
 
         // Time information (doesn't require player)
@@ -51,8 +53,6 @@ namespace ConditionEngine {
         isInWater = actor->IsInWater();
         isInCombat = actor->IsInCombat();
         isInLoveScene = registry.QueryLoveScene(actor);
-
-        cache.clear();
     }
 
     bool IsActorSleeping(RE::Actor* actor) {

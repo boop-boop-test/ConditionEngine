@@ -9,6 +9,8 @@
 #include <vector>
 #include <nlohmann/json.hpp>
 
+#include "ConditionEngine/ValueResult.h"
+
 namespace ConditionEngine {
 
     class EvaluationContext;
@@ -56,10 +58,12 @@ namespace ConditionEngine {
         // follower) - checked by the watcher's 1s change detection
         Availability    = 1 << 22,  // Required plugin or host integration readiness changed
         ActorState      = 1 << 21,
+        // A pushed value was set, a named value was redefined or an async sample arrived
+        Value           = 1 << 23,
     };
 
     // Total number of event dependency bits (for bucket iteration)
-    inline constexpr std::uint32_t kEventDependencyBitCount = 23;
+    inline constexpr std::uint32_t kEventDependencyBitCount = 24;
 
     constexpr EventDependency operator|(EventDependency a, EventDependency b) {
         return static_cast<EventDependency>(static_cast<std::uint32_t>(a) | static_cast<std::uint32_t>(b));
@@ -85,6 +89,20 @@ namespace ConditionEngine {
         LessEqual
     };
 
+    // Result of Condition::EvaluateTri: decided (True / False) or undecided because a
+    // value it reads has no result yet (Pending) or cannot be read (Unavailable).
+    enum class TriState { False, True, Pending, Unavailable };
+
+    struct TriResult {
+        TriState state = TriState::False;
+        std::string reason;  // why it is pending / unavailable
+
+        static TriResult Of(bool value) { return {value ? TriState::True : TriState::False, {}}; }
+        static TriResult Pending(std::string why) { return {TriState::Pending, std::move(why)}; }
+        static TriResult Unavailable(std::string why) { return {TriState::Unavailable, std::move(why)}; }
+        bool Decided() const { return state == TriState::True || state == TriState::False; }
+    };
+
     // Base condition interface
     class Condition {
     public:
@@ -98,6 +116,20 @@ namespace ConditionEngine {
 
         // Returns the event dependencies for this condition (what events would change its result)
         virtual EventDependency GetEventDependencies() const = 0;
+
+        // Like Evaluate, but Pending when the outcome depends on a value with no result yet
+        // (an async PapyrusCall before its first answer) and Unavailable when it depends on
+        // a value that cannot be read. And/Or/Not let a decided child settle the result
+        // (false && pending = false, true || unavailable = true); otherwise Pending wins
+        // over Unavailable, and Not keeps both. Used where "cannot tell" must not read as
+        // "false": a named value's enabledWhen, a condition read as a value.
+        virtual TriResult EvaluateTri(const EvaluationContext& context) const { return TriResult::Of(Evaluate(context)); }
+
+        // Numeric types (TypeInfo::value set) return the number they compare, ignoring
+        // their own comparison fields. Everything else reports an Error.
+        virtual ValueResult ReadValue(const EvaluationContext&) const {
+            return ValueResult::Fail(ValueStatus::Error, "not a numeric condition type");
+        }
 
         // Creates a condition from JSON using the type registry (see Registry.h).
         // Returns nullptr for missing/unknown types.

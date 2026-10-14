@@ -16,12 +16,21 @@
 //
 // Callbacks run on the main thread, only when the result differs from the
 // previous one.
+//
+// Value watches (API v5) sample a numeric value (Value.h) at their own interval,
+// down to one sample per frame, and on matching events. Watches of the same value
+// definition and actor share one sample. ReadValueWatch returns the latest sample
+// from any thread without touching game state.
 
+#include "ConditionEngine/Availability.h"
 #include "ConditionEngine/Condition.h"
 #include "ConditionEngine/Common.h"
+#include "ConditionEngine/Value.h"
 
+#include <atomic>
 #include <chrono>
 #include <mutex>
+#include <shared_mutex>
 
 namespace ConditionEngine {
 
@@ -42,9 +51,43 @@ namespace ConditionEngine {
         bool fireImmediately = false;
     };
 
+    struct ValueWatchOptions {
+        // Sampling interval. Zero = the global poll interval; WatchOptions::kNever = only
+        // on events. Intervals below a frame sample once per frame.
+        std::chrono::milliseconds pollInterval{0};
+        EventDependency extraDependencies = EventDependency::None;
+        bool fireImmediately = false;
+        // Callback when |value - last fired value| >= minStep. With thresholds and no
+        // step, only crossings (and status changes) fire; with neither, every change does.
+        double minStep = 0.0;
+        std::vector<double> thresholds;
+        // A crossed threshold re-arms only after the value moves this far back past it
+        double hysteresis = 0.0;
+    };
+
+    struct ValueSample {
+        using Clock = std::chrono::steady_clock;
+
+        double value = 0.0;
+        ValueStatus status = ValueStatus::Pending;
+        std::string reason;
+        std::optional<Clock::time_point> sampledAt;  // nullopt = never sampled
+        std::uint64_t availabilityRevision = 0;
+
+        // Milliseconds since the sample was read, computed now; UINT32_MAX = never
+        std::uint32_t AgeMs() const;
+    };
+
+    // crossedIndex: index of the threshold crossed, or -1 for a step or status change
+    using ValueWatchCallback =
+        std::function<void(WatchId id, RE::Actor* actor, const ValueSample& sample, int crossedIndex)>;
+
     class Watcher {
     public:
         static Watcher& Get();
+
+        // PostEvent actor argument meaning every watched actor
+        static constexpr RE::FormID kAllActors = static_cast<RE::FormID>(-1);
 
         // `actor` null = the player.
         WatchId Watch(std::shared_ptr<const Condition> condition, RE::Actor* actor, WatchCallback callback,
@@ -67,12 +110,35 @@ namespace ConditionEngine {
         // `actor` null = every watched actor. Must run on the main thread.
         void NotifyEvent(EventDependency events, RE::Actor* actor = nullptr);
 
+        // Thread-safe NotifyEvent: queued for the main thread, and posts for the same
+        // actor before the queue drains merge into one re-evaluation. `actorFormId`
+        // is a real FormID (0x14 = player) or kAllActors.
+        void PostEvent(EventDependency events, RE::FormID actorFormId);
+
+        // ── Value watches ────────────────────────────────────────────────────
+        // `actor` null = the player. `callback` may be null: the watch then only keeps
+        // the sample fresh for ReadValueWatch. Unwatch() removes it.
+        WatchId WatchValue(std::shared_ptr<const Value> value, RE::Actor* actor, ValueWatchCallback callback,
+                           const ValueWatchOptions& options = {});
+        // Latest sample. Any thread, never touches game state. False for unknown ids.
+        bool ReadValueWatch(WatchId id, ValueSample& out) const;
+        // Samples now (main thread). nullopt when the watch is unknown or the world is not loaded.
+        std::optional<ValueSample> RefreshValue(WatchId id);
+        std::size_t GetValueWatchCount() const;
+
         // Default full-poll interval (ConditionEngine.ini [Watcher] fPollIntervalSeconds)
         void SetPollInterval(std::chrono::milliseconds interval);
         std::chrono::milliseconds GetPollInterval() const;
 
-        // One change-detection pass plus any due full polls. Main thread.
+        // One change-detection pass plus any due full polls and value samples. Main thread.
         void Tick();
+
+        // Call before a game loads (SKSE kPreLoadGame / kNewGame). Watches on created
+        // references (0xFF...) cannot follow their actor into another save - the same
+        // FormID may name a different actor there - so they stop: condition watches are
+        // no longer evaluated and value watches read Unavailable ("actor from a previous
+        // game"). Unwatch and watch again after loading.
+        void OnGameLoad();
 
         // Registers game event sinks and starts the detection timer. Idempotent.
         // Call once the game data is loaded (SKSE kDataLoaded).
@@ -91,6 +157,7 @@ namespace ConditionEngine {
             std::chrono::milliseconds pollInterval{0};
             Clock::time_point lastEvaluated{};
             std::optional<bool> lastResult;
+            bool orphaned = false;  // created actor from before a game load: never evaluated again
         };
 
         struct ActorSnapshot {
@@ -109,6 +176,40 @@ namespace ConditionEngine {
         // Evaluates the entries `select` picks and fires callbacks for changed results
         void Evaluate(const std::function<bool(WatchId, const Entry&)>& select);
 
+        // One value read shared by every watch of the same definition and actor
+        struct Sampler {
+            std::shared_ptr<const Value> value;
+            std::string key;              // definition JSON + actor
+            RE::FormID actorId = 0;       // 0 = player (global values always use 0)
+            EventDependency dependencies = EventDependency::None;
+            std::chrono::milliseconds interval{WatchOptions::kNever};  // shortest of its watches
+            Clock::time_point lastSampled{};
+            std::uint64_t checkedRevision = ~0ull;  // availability cache
+            AvailabilityState availability = AvailabilityState::Available;
+            std::string availabilityReason;
+            std::size_t users = 0;
+
+            mutable std::mutex sampleMutex;  // guards `sample` for cross-thread reads
+            ValueSample sample;
+        };
+
+        struct ValueEntry {
+            std::shared_ptr<Sampler> sampler;
+            ValueWatchCallback callback;
+            ValueWatchOptions options;
+            std::chrono::milliseconds pollInterval{0};
+            bool delivered = false;               // fireImmediately / first sample handled
+            std::optional<double> lastFiredValue;
+            ValueStatus lastStatus = ValueStatus::Pending;
+            std::vector<bool> above;              // per threshold
+        };
+
+        // Samples the samplers `select` picks, then fires value callbacks
+        void SampleValues(const std::function<bool(const Sampler&)>& select);
+        // Shortest active value-watch interval (for the timer thread)
+        std::chrono::milliseconds ShortestValueInterval() const;
+        void DrainPosted();
+
         mutable std::mutex mutex_;
         std::unordered_map<WatchId, Entry> entries_;
         WatchId nextId_ = 1;
@@ -118,6 +219,20 @@ namespace ConditionEngine {
         // Touched only on the main thread (Tick)
         WorldSnapshot world_;
         std::unordered_map<RE::FormID, ActorSnapshot> actors_;
+        Clock::time_point lastDetect_{};
+        std::chrono::milliseconds detectInterval_{1000};
+
+        // Value watches: lookups from any thread take valueMutex_ shared
+        mutable std::shared_mutex valueMutex_;
+        std::unordered_map<WatchId, ValueEntry> valueEntries_;
+        std::unordered_map<std::string, std::shared_ptr<Sampler>> samplers_;
+        std::atomic<std::int64_t> shortestValueIntervalMs_{0};  // 0 = no value watches
+
+        // PostEvent queue
+        std::mutex postMutex_;
+        std::unordered_map<RE::FormID, EventDependency> posted_;
+        bool postQueued_ = false;
+        std::atomic<bool> tickQueued_{false};
     };
 
 } // namespace ConditionEngine

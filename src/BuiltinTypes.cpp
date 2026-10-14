@@ -77,6 +77,10 @@ namespace ConditionEngine {
         r.RegisterCategory({"script", "Scripts & Variables", 90});
         r.RegisterCategory({"game", "Vanilla Conditions", 95});
         r.RegisterCategory({"other", "Other", 100});
+        // Defaults for named values / conditions that name no category
+        r.RegisterCategory({"values", "Named Values", 110});
+        r.RegisterCategory({"named", "Named Conditions", 120});
+        r.RegisterSource("ConditionEngine", "ConditionEngine");
 
         // ── Logic ────────────────────────────────────────────────────────────
         TypeBuilder("Logical", "Logic Group", "logic")
@@ -120,6 +124,24 @@ namespace ConditionEngine {
             })
             .Register(r);
 
+        TypeBuilder("Compare", "Compare Values", "logic")
+            .Aliases({"CompareCondition"})
+            .Icon("⚖")
+            .Describe("Compares two values, e.g. $hunger > 80 or ActorValue(Health) * 2 < ActorValue(Magicka)")
+            .Fields({ValueExpr("left", "Left"), Comparison("operator", "Operator", "GreaterOrEqual"),
+                     ValueExpr("right", "Right")})
+            .Positional({})
+            .Hidden()  // written as a comparison between values rather than picked as a type
+            .Factory([](const json& j) {
+                const json left = j.value("left", json());
+                const json right = j.value("right", json());
+                std::shared_ptr<const Value> lv = Value::FromJson(left);
+                std::shared_ptr<const Value> rv = Value::FromJson(right);
+                return std::make_unique<CompareCondition>(lv, ParseComparisonOperator(j), rv,
+                                                          lv ? json() : left, rv ? json() : right);
+            })
+            .Register(r);
+
         // ── Time & date ──────────────────────────────────────────────────────
         TypeBuilder("Time", "Time of Day", "time")
             .Aliases({"TimeCondition", "TimeOfDay"})
@@ -128,6 +150,7 @@ namespace ConditionEngine {
             .Fields({Int("startHour", "Start Hour", 6).Range(0, 23), Int("endHour", "End Hour", 18).Range(0, 23)})
             .Positional({"startHour", "endHour"})
             .Derived({"isRange"})
+            .Value({.unit = "h", .min = 0, .max = 24})
             .Factory([](const json& j) {
                 return std::make_unique<TimeCondition>(j.value("startHour", 0.0f), j.value("endHour", 0.0f),
                                                        ParseComparisonOperator(j));
@@ -140,6 +163,7 @@ namespace ConditionEngine {
             .Describe("Bitmask of allowed weekdays (bit 0 = Sundas ... bit 6 = Loredas)")
             .Fields({Int("allowedDays", "Allowed Days (bitmask)", 0x7F).Range(0, 0x7F)})
             .Derived({"dayNames"})
+            .Value({.min = 0, .max = 6, .integer = true})
             .Factory([](const json& j) {
                 return std::make_unique<DayOfWeekCondition>(static_cast<std::uint8_t>(j.value("allowedDays", 0x7F)));
             })
@@ -151,6 +175,7 @@ namespace ConditionEngine {
             .Describe("Bitmask of allowed months (bit 0 = Morning Star ... bit 11 = Evening Star)")
             .Fields({Int("allowedMonths", "Allowed Months (bitmask)", 0x0FFF).Range(0, 0x0FFF)})
             .Derived({"monthNames"})
+            .Value({.min = 0, .max = 11, .integer = true})
             .Factory([](const json& j) {
                 return std::make_unique<MonthCondition>(static_cast<std::uint16_t>(j.value("allowedMonths", 0x0FFF)));
             })
@@ -161,6 +186,7 @@ namespace ConditionEngine {
             .Icon("📅")
             .Describe("Bitmask of allowed days of the month (bit 0 = day 1)")
             .Fields({Int("allowedDays", "Allowed Days (bitmask)", 0x7FFFFFFF)})
+            .Value({.min = 1, .max = 31, .integer = true})
             .Factory([](const json& j) { return std::make_unique<DayOfMonthCondition>(j.value("allowedDays", 0x7FFFFFFFu)); })
             .Register(r);
 
@@ -248,6 +274,7 @@ namespace ConditionEngine {
                      Float("targetTemperature", "Exact Temperature")})
             .Positional({"temperatureRange"})
             .Compare("targetTemperature")
+            .Value({})
             .Factory([](const json& j) {
                 float temp = 0.0f;
                 auto op = ParseComparisonOperator(j);
@@ -275,6 +302,7 @@ namespace ConditionEngine {
                      Int("minRank", "Rank", 0).Range(-1, 127)})
             .Positional({"factionId", "minRank"})
             .Compare("minRank")
+            .Value({.min = -1, .max = 127, .integer = true})
             .Factory([](const json& j) {
                 return std::make_unique<FactionCondition>(j.value("factionId", j.value("factionName", "")),
                                                           j.value("minRank", j.value("minimumRank", 0)),
@@ -297,6 +325,7 @@ namespace ConditionEngine {
                      Bool("usePercentage", "Use percentage (vs absolute value)", true)})
             .Positional({"actorValue", "value"})
             .Compare("value")
+            .Value({})
             .Factory([](const json& j) {
                 return std::make_unique<ActorValueCondition>(j.value("actorValue", j.value("actorValueName", "")),
                                                              j.value("value", j.value("targetValue", 0.0f)),
@@ -357,6 +386,7 @@ namespace ConditionEngine {
                      Int("stage", "Stage", 0).Range(0, 65535)})
             .Positional({"questId", "stage"})
             .Compare("stage")
+            .Value({.min = 0, .max = 65535, .integer = true})
             .Factory([](const json& j) {
                 return std::make_unique<QuestStageCondition>(j.value("questId", j.value("questName", "")),
                                                              j.value("stage", j.value("targetStage", 0)),
@@ -400,6 +430,7 @@ namespace ConditionEngine {
                      Float("value", "Value", 0)})
             .Positional({"globalId", "value"})
             .Compare("value")
+            .Value({})
             .Factory([](const json& j) {
                 return std::make_unique<GlobalVariableCondition>(
                     j.value("globalId", j.value("globalName", j.value("variableName", ""))),
@@ -410,19 +441,52 @@ namespace ConditionEngine {
         TypeBuilder("ScriptValue", "Script Property", "script")
             .Aliases({"ScriptValueCondition"})
             .Icon("📝")
-            .Describe("A Papyrus script property on the actor")
+            .Describe("A Papyrus script property on the actor, or on a form such as a quest")
             .Fields({String("scriptName", "Script").Required(),
                      String("variableName", "Property").Required(),
                      Enum("valueType", "Value Type", Options({"int", "float", "bool", "string"}), "float"),
                      Comparison("operator", "Operator", "Equal"),
-                     String("targetValue", "Value", "")})
+                     String("targetValue", "Value", ""),
+                     Form("form", "Bound To", {"Quest"})
+                         .Describe("Form the script is attached to, e.g. a quest; empty = the actor")})
             .Positional({"scriptName", "variableName", "valueType", "targetValue"})
             .Compare("targetValue")
+            .Value({})
             .Factory([](const json& j) {
                 return std::make_unique<ScriptValueCondition>(j.value("scriptName", ""), j.value("variableName", ""),
                                                               j.value("valueType", "float"),
                                                               ReadScalarAsString(j, "targetValue"),
-                                                              ParseComparisonOperator(j));
+                                                              ParseComparisonOperator(j), j.value("form", ""));
+            })
+            .Register(r);
+
+        TypeBuilder("PapyrusCall", "Papyrus Function", "script")
+            .Icon("📞")
+            .Describe("Number returned by a Papyrus function called with the actor (asynchronous, cached)")
+            .Fields({String("script", "Script").Required().Describe("Script name, e.g. SeverActionsNative"),
+                     String("function", "Function").Required().Describe("Function returning Int, Float or Bool"),
+                     Form("form", "Bound To", {"Quest"})
+                         .Describe("Form whose script has the method; empty = a global (static) function"),
+                     Bool("passActor", "Pass the actor as the argument", true),
+                     Float("interval", "Refresh (seconds)", 1.0).Range(0.05, 3600),
+                     Comparison("operator", "Operator", "NotEqual"),
+                     Float("value", "Value", 0)})
+            .Positional({"script", "function"})
+            .Compare("value")
+            .Value({})
+            .Factory([](const json& j) {
+                PapyrusCallCondition::Call call;
+                call.script = j.value("script", "");
+                call.function = j.value("function", "");
+                call.form = j.value("form", "");
+                call.passActor = j.value("passActor", true);
+                call.intervalSeconds = j.value("interval", 1.0);
+                // Bare PapyrusCall(...) means "returned non-zero"
+                const bool hasOp = j.contains("operator") || j.contains("operation");
+                const bool hasValue = j.contains("value");
+                auto op = hasOp ? ParseComparisonOperator(j)
+                                : (hasValue ? ComparisonOperator::Equal : ComparisonOperator::NotEqual);
+                return std::make_unique<PapyrusCallCondition>(std::move(call), op, j.value("value", 0.0));
             })
             .Register(r);
 
@@ -438,6 +502,7 @@ namespace ConditionEngine {
                      String("salt", "Salt (optional)", "").Describe("Unique identifier for independent rolls"),
                      Int("intervalHours", "Interval (hours)", 1).Range(1, 24).Describe("For the Time seed")})
             .Positional({"chance", "seedType", "salt", "intervalHours"})
+            .Value({.min = 0, .max = 99, .integer = true})
             .Factory([](const json& j) {
                 return std::make_unique<RandomCondition>(RandomCondition::ParseSeedType(j.value("seedType", "Location")),
                                                          j.value("chance", 50), j.value("salt", ""),
@@ -460,6 +525,7 @@ namespace ConditionEngine {
                           "Subject")})
             .Positional({"function", "param1", "param2"})
             .Compare("value")
+            .Value({})
             .Factory([](const json& j) {
                 std::vector<std::string> params;
                 if (j.contains("params") && j["params"].is_array()) {

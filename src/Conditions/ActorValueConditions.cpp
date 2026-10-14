@@ -34,9 +34,9 @@ namespace ConditionEngine {
     ActorValueCondition::ActorValueCondition(const std::string& avName, float value, ComparisonOperator op, bool usePercent)
         : actorValue(RE::ActorValue::kNone), actorValueName(avName), targetValue(value), operation(op), usePercentage(usePercent) {}
 
-    bool ActorValueCondition::Evaluate(const EvaluationContext& context) const {
+    ValueResult ActorValueCondition::ReadValue(const EvaluationContext& context) const {
         auto actor = context.GetActor();
-        if (!actor) return false;
+        if (!actor) return ValueResult::Fail(ValueStatus::Unavailable, "no actor");
 
         RE::ActorValue av = actorValue;
         if (av == RE::ActorValue::kNone && !actorValueName.empty()) {
@@ -45,7 +45,9 @@ namespace ConditionEngine {
                 av = avList->LookupActorValueByName(actorValueName.c_str());
             }
         }
-        if (av == RE::ActorValue::kNone) return false;
+        if (av == RE::ActorValue::kNone) {
+            return ValueResult::Fail(ValueStatus::Error, "unknown actor value '" + actorValueName + "'");
+        }
 
         auto* avOwner = actor->AsActorValueOwner();
         float currentValue = avOwner->GetActorValue(av);
@@ -58,8 +60,12 @@ namespace ConditionEngine {
                 currentValue = 0.0f;
             }
         }
+        return ValueResult::Of(currentValue);
+    }
 
-        return CompareFloatLocal(currentValue, targetValue, operation);
+    bool ActorValueCondition::Evaluate(const EvaluationContext& context) const {
+        const auto current = ReadValue(context);
+        return current.Ok() && CompareFloatLocal(static_cast<float>(current.value), targetValue, operation);
     }
 
     std::string ActorValueCondition::GetDescription() const {

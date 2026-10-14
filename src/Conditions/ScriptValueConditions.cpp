@@ -1,49 +1,91 @@
 #include "ConditionEngine/Conditions/ScriptValueConditions.h"
 #include "ConditionEngine/Condition.h"
 #include "ConditionEngine/EvaluationContext.h"
+#include "ConditionEngine/Forms.h"
 
 namespace ConditionEngine {
 
     ScriptValueCondition::ScriptValueCondition(const std::string& script, const std::string& varName,
-                                               const std::string& valType, const std::string& value, ComparisonOperator op)
-        : scriptName(script), variableName(varName), valueType(valType), targetValue(value), operation(op) {}
+                                               const std::string& valType, const std::string& value, ComparisonOperator op,
+                                               std::string formKey)
+        : scriptName(script), variableName(varName), valueType(valType), targetValue(value), operation(op),
+          form(std::move(formKey)) {}
 
-    bool ScriptValueCondition::Evaluate(const EvaluationContext& context) const {
-        if (scriptName.empty() || variableName.empty()) return false;
+    const RE::BSScript::Variable* ScriptValueCondition::FindProperty(const EvaluationContext& context,
+                                                                     RE::BSTSmartPointer<RE::BSScript::Object>& scriptObject,
+                                                                     std::string& error) const {
+        if (scriptName.empty() || variableName.empty()) {
+            error = "no script or property name";
+            return nullptr;
+        }
 
-        auto actor = context.GetActor();
-        if (!actor) return false;
+        // The object the script is bound to: the actor, or the configured form (e.g. a quest)
+        RE::TESForm* owner = nullptr;
+        if (!form.empty()) {
+            owner = Forms::LookupAny(form);
+            if (!owner) {
+                error = "form not found: " + form;
+                return nullptr;
+            }
+        } else {
+            owner = context.GetActor();
+            if (!owner) {
+                error = "no actor";
+                return nullptr;
+            }
+        }
 
         // Access the Papyrus VM to read script property values
         auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
         if (!vm) {
-            SKSE::log::trace("ScriptValueCondition: Papyrus VM not available");
-            return false;
+            error = "Papyrus VM not available";
+            return nullptr;
         }
 
-        // Get the object handle for the actor
         auto* handlePolicy = vm->GetObjectHandlePolicy();
-        if (!handlePolicy) return false;
-
-        RE::VMHandle handle = handlePolicy->GetHandleForObject(
-            static_cast<RE::VMTypeID>(actor->GetFormType()), actor);
-        if (!handle) return false;
-
-        // Find the bound script object on the actor
-        RE::BSTSmartPointer<RE::BSScript::Object> scriptObject;
-        if (!vm->FindBoundObject(handle, scriptName.c_str(), scriptObject) || !scriptObject) {
-            SKSE::log::trace("ScriptValueCondition: Script '{}' not found on actor 0x{:X}",
-                scriptName, actor->GetFormID());
-            return false;
+        if (!handlePolicy) {
+            error = "Papyrus handle policy not available";
+            return nullptr;
         }
 
-        // Get the property variable
+        RE::VMHandle handle = handlePolicy->GetHandleForObject(static_cast<RE::VMTypeID>(owner->GetFormType()), owner);
+        if (!handle) {
+            error = "no Papyrus handle for the form";
+            return nullptr;
+        }
+
+        // Find the bound script object
+        if (!vm->FindBoundObject(handle, scriptName.c_str(), scriptObject) || !scriptObject) {
+            error = "script '" + scriptName + "' is not attached";
+            SKSE::log::trace("ScriptValueCondition: Script '{}' not found on form 0x{:X}", scriptName, owner->GetFormID());
+            return nullptr;
+        }
+
         auto* variable = scriptObject->GetProperty(RE::BSFixedString(variableName));
         if (!variable) {
-            SKSE::log::trace("ScriptValueCondition: Property '{}' not found on script '{}'",
-                variableName, scriptName);
-            return false;
+            error = "property '" + variableName + "' not found on script '" + scriptName + "'";
+            SKSE::log::trace("ScriptValueCondition: Property '{}' not found on script '{}'", variableName, scriptName);
+            return nullptr;
         }
+        return variable;
+    }
+
+    ValueResult ScriptValueCondition::ReadValue(const EvaluationContext& context) const {
+        RE::BSTSmartPointer<RE::BSScript::Object> scriptObject;
+        std::string error;
+        const auto* variable = FindProperty(context, scriptObject, error);
+        if (!variable) return ValueResult::Fail(ValueStatus::Unavailable, error);
+        if (variable->IsInt()) return ValueResult::Of(variable->GetSInt());
+        if (variable->IsFloat()) return ValueResult::Of(variable->GetFloat());
+        if (variable->IsBool()) return ValueResult::Of(variable->GetBool() ? 1.0 : 0.0);
+        return ValueResult::Fail(ValueStatus::Error, scriptName + "." + variableName + " is not a number or bool");
+    }
+
+    bool ScriptValueCondition::Evaluate(const EvaluationContext& context) const {
+        RE::BSTSmartPointer<RE::BSScript::Object> scriptObject;
+        std::string error;
+        const auto* variable = FindProperty(context, scriptObject, error);
+        if (!variable) return false;
 
         // Compare based on value type
         if (valueType == "int") {
@@ -89,11 +131,12 @@ namespace ConditionEngine {
         json["valueType"] = valueType;
         json["targetValue"] = targetValue;
         json["operator"] = ComparisonOpToName(operation);
+        if (!form.empty()) json["form"] = form;
         return json;
     }
 
     std::unique_ptr<Condition> ScriptValueCondition::Clone() const {
-        return std::make_unique<ScriptValueCondition>(scriptName, variableName, valueType, targetValue, operation);
+        return std::make_unique<ScriptValueCondition>(scriptName, variableName, valueType, targetValue, operation, form);
     }
 
     std::vector<std::string> ScriptValueCondition::Validate() const {

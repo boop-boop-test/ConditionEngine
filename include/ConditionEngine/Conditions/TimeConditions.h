@@ -13,6 +13,7 @@ namespace ConditionEngine {
         TimeCondition(float startHour, float endHour, ComparisonOperator op = ComparisonOperator::Equal);
         
         bool Evaluate(const EvaluationContext& context) const override;
+        ValueResult ReadValue(const EvaluationContext& context) const override;
         std::string GetDescription() const override;
         nlohmann::json ToJson() const override;
         std::unique_ptr<Condition> Clone() const override;
@@ -32,6 +33,7 @@ namespace ConditionEngine {
         explicit DayOfWeekCondition(std::uint8_t allowedDaysMask = 0x7F); // default: all days
         
         bool Evaluate(const EvaluationContext& context) const override;
+        ValueResult ReadValue(const EvaluationContext& context) const override;
         std::string GetDescription() const override;
         nlohmann::json ToJson() const override;
         std::unique_ptr<Condition> Clone() const override;
@@ -52,6 +54,7 @@ namespace ConditionEngine {
         explicit MonthCondition(std::uint16_t allowedMonthsMask = 0x0FFF); // default: all months
         
         bool Evaluate(const EvaluationContext& context) const override;
+        ValueResult ReadValue(const EvaluationContext& context) const override;
         std::string GetDescription() const override;
         nlohmann::json ToJson() const override;
         std::unique_ptr<Condition> Clone() const override;
@@ -74,6 +77,7 @@ namespace ConditionEngine {
         explicit DayOfMonthCondition(std::uint32_t allowedDaysMask = 0x7FFFFFFF);
         
         bool Evaluate(const EvaluationContext& context) const override;
+        ValueResult ReadValue(const EvaluationContext& context) const override;
         std::string GetDescription() const override;
         nlohmann::json ToJson() const override;
         std::unique_ptr<Condition> Clone() const override;

@@ -32,6 +32,28 @@ namespace ConditionEngine {
         return false;
     }
 
+    TriResult LogicalCondition::EvaluateTri(const EvaluationContext& context) const {
+        if (operation == LogicalOperator::Not) {
+            if (children.empty()) return TriResult::Of(true);
+            auto r = children[0]->EvaluateTri(context);
+            if (!r.Decided()) return r;
+            return TriResult::Of(r.state == TriState::False);
+        }
+        // And: any false decides; Or: any true decides; otherwise an undecided child leaves
+        // it undecided, Pending before Unavailable
+        const TriState decisive = operation == LogicalOperator::And ? TriState::False : TriState::True;
+        std::optional<TriResult> pending, unavailable;
+        for (const auto& child : children) {
+            auto r = child->EvaluateTri(context);
+            if (r.state == decisive) return r;
+            if (r.state == TriState::Pending && !pending) pending = std::move(r);
+            else if (r.state == TriState::Unavailable && !unavailable) unavailable = std::move(r);
+        }
+        if (pending) return *pending;
+        if (unavailable) return *unavailable;
+        return TriResult::Of(operation == LogicalOperator::And);
+    }
+
     std::string LogicalCondition::GetDescription() const {
         std::string desc;
         switch (operation) {

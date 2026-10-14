@@ -112,6 +112,12 @@ namespace ConditionEngine {
 
     LevelCondition::LevelCondition(int level, ComparisonOperator op) : level_(level), op_(op) {}
 
+    ValueResult LevelCondition::ReadValue(const EvaluationContext& context) const {
+        auto* actor = context.GetActor();
+        if (!actor) return ValueResult::Fail(ValueStatus::Unavailable, "no actor");
+        return ValueResult::Of(actor->GetLevel());
+    }
+
     bool LevelCondition::Evaluate(const EvaluationContext& context) const {
         auto* actor = context.GetActor();
         return actor && CompareInt(actor->GetLevel(), level_, op_);
@@ -314,6 +320,7 @@ namespace ConditionEngine {
             .Fields({Comparison("operator", "Operator", "GreaterOrEqual"), Int("level", "Level", 1).Range(1, 65535)})
             .Positional({"level"})
             .Compare("level")
+            .Value({.min = 1, .max = 65535, .integer = true})
             .Factory([](const json& j) {
                 const bool hasOp = j.contains("operator") || j.contains("operation");
                 return std::make_unique<LevelCondition>(j.value("level", 1),

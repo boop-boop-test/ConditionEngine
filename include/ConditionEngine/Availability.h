@@ -7,6 +7,7 @@
 
 namespace ConditionEngine {
     struct TypeInfo;
+    class Value;
 
     enum class AvailabilityState : std::int32_t { Pending = 0, Available = 1, Unavailable = 2 };
 
@@ -24,6 +25,9 @@ namespace ConditionEngine {
     public:
         static Availability& Get();
         AvailabilityStatus Check(const Condition& condition) const;
+        // Value expressions: numeric types, $name references (their required plugins,
+        // enabledWhen and definition) and conditions read as 0 / 1
+        AvailabilityStatus CheckValue(const Value& value) const;
         AvailabilityStatus CheckType(const TypeInfo& type) const;
         bool SetTypeStatus(const std::string& type, AvailabilityStatus status);
         void SetLoadedPlugins(const std::vector<std::string>& plugins);
@@ -39,6 +43,8 @@ namespace ConditionEngine {
         AvailabilityStatus PluginStatus(const std::string& plugin) const;
         AvailabilityStatus CheckNode(const nlohmann::json& node, std::unordered_set<std::string>& names,
                                      std::size_t depth) const;
+        AvailabilityStatus CheckValueNode(const nlohmann::json& node, std::unordered_set<std::string>& names,
+                                          std::size_t depth) const;
         void Publish();
         mutable std::mutex mutex_;
         bool pluginsReady_ = false;

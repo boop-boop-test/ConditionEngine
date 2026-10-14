@@ -11,6 +11,11 @@ namespace ConditionEngine {
         : questFormId(0), questName(name), targetStage(stage), operation(op) {}
 
     bool QuestStageCondition::Evaluate(const EvaluationContext& context) const {
+        const auto stage = ReadValue(context);
+        return stage.Ok() && CompareInt(static_cast<int>(stage.value), targetStage, operation);
+    }
+
+    ValueResult QuestStageCondition::ReadValue(const EvaluationContext&) const {
         RE::TESQuest* quest = nullptr;
         if (questFormId != 0) {
             quest = RE::TESForm::LookupByID<RE::TESQuest>(questFormId);
@@ -20,10 +25,11 @@ namespace ConditionEngine {
                 quest = form->As<RE::TESQuest>();
             }
         }
-        if (!quest) return false;
-
-        int currentStage = quest->GetCurrentStageID();
-        return CompareInt(currentStage, targetStage, operation);
+        if (!quest) {
+            return ValueResult::Fail(ValueStatus::Unavailable,
+                                     "quest not found: " + (questName.empty() ? std::to_string(questFormId) : questName));
+        }
+        return ValueResult::Of(quest->GetCurrentStageID());
     }
 
     std::string QuestStageCondition::GetDescription() const {

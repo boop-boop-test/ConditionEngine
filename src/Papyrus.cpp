@@ -6,6 +6,8 @@
 #include "ConditionEngine/EvaluationContext.h"
 #include "ConditionEngine/Expression.h"
 #include "ConditionEngine/Registry.h"
+#include "ConditionEngine/Value.h"
+#include "ConditionEngine/Values/PushedValues.h"
 #include "ConditionEngine/Watcher.h"
 
 #include <mutex>
@@ -25,6 +27,23 @@ namespace ConditionEngine::Papyrus {
 
         std::mutex g_watchMutex;
         std::unordered_set<WatchId> g_scriptWatches;
+
+        std::unordered_map<std::string, std::shared_ptr<const Value>> g_compiledValues;
+
+        std::shared_ptr<const Value> CompileValueCached(const std::string& expression, std::string* error = nullptr) {
+            {
+                std::lock_guard lock(g_cacheMutex);
+                auto it = g_compiledValues.find(expression);
+                if (it != g_compiledValues.end()) return it->second;
+            }
+            auto compiled = Expression::CompileValueAny(expression, error);
+            if (!compiled) return nullptr;
+            std::shared_ptr<const Value> shared(std::move(compiled));
+            std::lock_guard lock(g_cacheMutex);
+            if (g_compiledValues.size() >= kMaxCachedExpressions) g_compiledValues.clear();
+            g_compiledValues.emplace(expression, shared);
+            return shared;
+        }
 
         std::shared_ptr<const Condition> CompileCached(const std::string& expression, std::string* error = nullptr) {
             {
@@ -112,6 +131,107 @@ namespace ConditionEngine::Papyrus {
                 SKSE::log::warn("ConditionEngine.EvaluateNamed: unknown condition '{}'", name.c_str());
             }
             return EvaluateOnMainThread(vm, stackId, std::move(condition), actor);
+        }
+
+        // ── Values ──────────────────────────────────────────────────────────
+
+        // Reads a value on the main thread; the script waits one frame. Not-OK values
+        // return their fallback (0 when there is none).
+        Latent GetValue(InternalVM* vm, RE::VMStackID stackId, StaticFn*, RE::Actor* actor, RE::BSFixedString nameOrExpr) {
+            std::string error;
+            auto value = CompileValueCached(nameOrExpr.c_str(), &error);
+            if (!value) SKSE::log::warn("ConditionEngine.GetValue: {} in \"{}\"", error, nameOrExpr.c_str());
+            auto* tasks = SKSE::GetTaskInterface();
+            if (!tasks) return Latent::kFailed;
+            const RE::ActorHandle handle = actor ? actor->GetHandle() : RE::ActorHandle{};
+            const bool usePlayer = actor == nullptr;
+            tasks->AddTask([vm, stackId, value = std::move(value), handle, usePlayer]() {
+                float result = 0.0f;
+                RE::Actor* target = usePlayer ? RE::PlayerCharacter::GetSingleton() : handle.get().get();
+                if (value && target) {
+                    EvaluationContext context(target);
+                    result = static_cast<float>(ReadValueAvailable(*value, context).value);
+                }
+                vm->ReturnLatentResult<float>(stackId, result);
+            });
+            return Latent::kStarted;
+        }
+
+        bool SetValue(StaticFn*, RE::Actor* actor, RE::BSFixedString name, float value, float timeoutSeconds) {
+            return PushedValues::Get().Set(actor, name.c_str(), value, timeoutSeconds);
+        }
+
+        bool SetGlobalValue(StaticFn*, RE::BSFixedString name, float value, float timeoutSeconds) {
+            return PushedValues::Get().SetGlobal(name.c_str(), value, timeoutSeconds);
+        }
+
+        bool ClearValue(StaticFn*, RE::Actor* actor, RE::BSFixedString name) {
+            return PushedValues::Get().Clear(actor, name.c_str());
+        }
+
+        bool ClearGlobalValue(StaticFn*, RE::BSFixedString name) {
+            return PushedValues::Get().ClearGlobal(name.c_str());
+        }
+
+        // asDefinition: value text ("$a * 2") or a JSON definition object
+        bool RegisterNamedValue(StaticFn*, RE::BSFixedString name, RE::BSFixedString definition) {
+            const std::string text = definition.c_str();
+            nlohmann::json parsed = text;
+            const auto first = text.find_first_not_of(" \t\r\n");
+            if (first != std::string::npos && text[first] == '{') {
+                try {
+                    parsed = nlohmann::json::parse(text);
+                } catch (const std::exception& e) {
+                    SKSE::log::warn("ConditionEngine.RegisterNamedValue('{}'): invalid JSON: {}", name.c_str(), e.what());
+                    return false;
+                }
+            }
+            std::string error;
+            auto def = NamedValueDef::Parse(name.c_str(), parsed, "papyrus", &error);
+            if (!def) {
+                SKSE::log::warn("ConditionEngine.RegisterNamedValue('{}'): {}", name.c_str(), error);
+                return false;
+            }
+            Registry::Get().RegisterNamedValue(std::move(def));
+            Watcher::Get().PostEvent(EventDependency::Value, Watcher::kAllActors);
+            return true;
+        }
+
+        // Sends ModEvent asEventName(strArg = watch id, numArg = value, sender = actor) when the
+        // value moves by afMinStep (any change when 0)
+        std::int32_t WatchValue(StaticFn*, RE::Actor* actor, RE::BSFixedString nameOrExpr, RE::BSFixedString eventName,
+                                float minStep, float pollIntervalSeconds, bool fireImmediately) {
+            if (eventName.empty()) return 0;
+            std::string error;
+            auto value = CompileValueCached(nameOrExpr.c_str(), &error);
+            if (!value) {
+                SKSE::log::warn("ConditionEngine.WatchValue: {} in \"{}\"", error, nameOrExpr.c_str());
+                return 0;
+            }
+
+            ValueWatchOptions options;
+            options.fireImmediately = fireImmediately;
+            options.minStep = std::max(0.0f, minStep);
+            if (pollIntervalSeconds < 0.0f) {
+                options.pollInterval = WatchOptions::kNever;
+            } else if (pollIntervalSeconds > 0.0f) {
+                options.pollInterval = std::chrono::milliseconds(static_cast<long long>(pollIntervalSeconds * 1000.0f));
+            }
+
+            const std::string event = eventName.c_str();
+            auto id = Watcher::Get().WatchValue(
+                value, actor,
+                [event](WatchId watchId, RE::Actor* target, const ValueSample& sample, int) {
+                    SKSE::ModCallbackEvent modEvent{event, std::to_string(watchId), static_cast<float>(sample.value), target};
+                    if (auto* source = SKSE::GetModCallbackEventSource()) source->SendEvent(&modEvent);
+                },
+                options);
+
+            if (id != 0) {
+                std::lock_guard lock(g_watchMutex);
+                g_scriptWatches.insert(id);
+            }
+            return static_cast<std::int32_t>(id);
         }
 
         bool RegisterNamed(StaticFn*, RE::BSFixedString name, RE::BSFixedString expression) {
@@ -237,6 +357,13 @@ namespace ConditionEngine::Papyrus {
             vm->RegisterFunction("RefreshWatch", kScriptName, RefreshWatch);
             vm->RegisterFunction("GetCatalog", kScriptName, GetCatalog, true);
             vm->RegisterFunction("SetPollInterval", kScriptName, SetPollInterval);
+            RegisterLatent<float>(vm, "GetValue", GetValue);
+            vm->RegisterFunction("SetValue", kScriptName, SetValue);
+            vm->RegisterFunction("SetGlobalValue", kScriptName, SetGlobalValue);
+            vm->RegisterFunction("ClearValue", kScriptName, ClearValue);
+            vm->RegisterFunction("ClearGlobalValue", kScriptName, ClearGlobalValue);
+            vm->RegisterFunction("RegisterNamedValue", kScriptName, RegisterNamedValue);
+            vm->RegisterFunction("WatchValue", kScriptName, WatchValue);
             vm->RegisterFunction("GetPollInterval", kScriptName, GetPollInterval);
             return true;
         }

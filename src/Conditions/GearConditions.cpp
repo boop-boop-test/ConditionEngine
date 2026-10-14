@@ -39,9 +39,15 @@ namespace ConditionEngine {
     }
 
     bool ItemCountCondition::Evaluate(const EvaluationContext& context) const {
+        const auto total = ReadValue(context);
+        return total.Ok() && CompareInt(static_cast<int>(total.value), count_, op_);
+    }
+
+    ValueResult ItemCountCondition::ReadValue(const EvaluationContext& context) const {
         auto* actor = context.GetActor();
+        if (!actor) return ValueResult::Fail(ValueStatus::Unavailable, "no actor");
         auto* form = Resolve();
-        if (!actor || !form) return false;
+        if (!form) return ValueResult::Fail(ValueStatus::Unavailable, "item not found: " + item_);
 
         std::int32_t total = 0;
         if (auto* keyword = form->As<RE::BGSKeyword>()) {
@@ -55,9 +61,9 @@ namespace ConditionEngine {
             auto counts = actor->GetInventoryCounts([bound](RE::TESBoundObject& object) { return &object == bound; });
             for (const auto& [object, count] : counts) total += count;
         } else {
-            return false;
+            return ValueResult::Fail(ValueStatus::Error, item_ + " is not an item or keyword");
         }
-        return CompareInt(total, count_, op_);
+        return ValueResult::Of(total);
     }
 
     std::string ItemCountCondition::GetDescription() const {
@@ -204,6 +210,7 @@ namespace ConditionEngine {
                      Int("count", "Count", 1).Range(0, 65535)})
             .Positional({"item", "count"})
             .Compare("count")
+            .Value({.min = 0, .integer = true})
             .Factory(itemCount(false))
             .Register(r);
 
