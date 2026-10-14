@@ -72,12 +72,12 @@ namespace ConditionEngine {
 
     void PushedValues::ExpireDue() {
         const auto now = ValueResult::Clock::now();
-        std::vector<RE::FormID> expired;
+        std::vector<std::pair<RE::FormID, std::string>> expired;
         {
             std::lock_guard lock(mutex_);
             for (auto it = entries_.begin(); it != entries_.end();) {
                 if (it->second.expiresAt && now >= *it->second.expiresAt) {
-                    expired.push_back(it->first.first);
+                    expired.push_back(it->first);
                     ended_[it->first] = Ended::Expired;
                     it = entries_.erase(it);
                     count_ = entries_.size();
@@ -86,8 +86,8 @@ namespace ConditionEngine {
                 }
             }
         }
-        for (auto key : expired) {
-            Watcher::Get().PostEvent(EventDependency::Value, key == kGlobalKey ? Watcher::kAllActors : key);
+        for (const auto& [key, name] : expired) {
+            Watcher::Get().PostValueChange("$" + name, key == kGlobalKey ? Watcher::kAllActors : key);
         }
     }
 
@@ -106,7 +106,7 @@ namespace ConditionEngine {
             ended_.erase({key, Lower(name)});
             count_ = entries_.size();
         }
-        Watcher::Get().PostEvent(EventDependency::Value, key == kGlobalKey ? Watcher::kAllActors : key);
+        Watcher::Get().PostValueChange("$" + Lower(name), key == kGlobalKey ? Watcher::kAllActors : key);
         return true;
     }
 
@@ -118,7 +118,7 @@ namespace ConditionEngine {
             count_ = entries_.size();
             if (removed) ended_[{key, Lower(name)}] = Ended::Cleared;
         }
-        if (removed) Watcher::Get().PostEvent(EventDependency::Value, key == kGlobalKey ? Watcher::kAllActors : key);
+        if (removed) Watcher::Get().PostValueChange("$" + Lower(name), key == kGlobalKey ? Watcher::kAllActors : key);
         return removed;
     }
 

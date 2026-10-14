@@ -25,6 +25,7 @@
 #include "ConditionEngine/Availability.h"
 #include "ConditionEngine/Condition.h"
 #include "ConditionEngine/Common.h"
+#include "ConditionEngine/FirstMatchList.h"
 #include "ConditionEngine/Value.h"
 
 #include <atomic>
@@ -71,12 +72,16 @@ namespace ConditionEngine {
         double value = 0.0;
         ValueStatus status = ValueStatus::Pending;
         std::string reason;
+        std::string from;  // combined values: the provider that answered
         std::optional<Clock::time_point> sampledAt;  // nullopt = never sampled
         std::uint64_t availabilityRevision = 0;
 
         // Milliseconds since the sample was read, computed now; UINT32_MAX = never
         std::uint32_t AgeMs() const;
     };
+
+    // List watches (issue 090): winner = index of the first true rule, -1 none
+    using ListWatchCallback = std::function<void(WatchId id, RE::Actor* actor, int winner)>;
 
     // crossedIndex: index of the threshold crossed, or -1 for a step or status change
     using ValueWatchCallback =
@@ -110,10 +115,28 @@ namespace ConditionEngine {
         // `actor` null = every watched actor. Must run on the main thread.
         void NotifyEvent(EventDependency events, RE::Actor* actor = nullptr);
 
+        // NotifyEvent for a keyed value change: wakes only what reads one of `keys`
+        // ("$name", "call:<key>") among Value-dependent watches.
+        void NotifyEvent(EventDependency events, RE::Actor* actor, const std::set<std::string>* keys);
+
         // Thread-safe NotifyEvent: queued for the main thread, and posts for the same
         // actor before the queue drains merge into one re-evaluation. `actorFormId`
         // is a real FormID (0x14 = player) or kAllActors.
         void PostEvent(EventDependency events, RE::FormID actorFormId);
+        // Thread-safe keyed value change ("$hunger", "call:<key>") for an actor or kAllActors
+        void PostValueChange(std::string key, RE::FormID actorFormId);
+
+        // ── List watches ─────────────────────────────────────────────────────
+        // Ordered rules for one actor; the callback fires when the first true rule (its
+        // index, -1 none) changes. See FirstMatchList.h. `callback` may be null.
+        WatchId WatchList(std::vector<std::shared_ptr<const Condition>> rules, RE::Actor* actor,
+                          ListWatchCallback callback, const WatchOptions& options = {});
+        // Any thread: the current winner, -1 none, -2 unknown watch
+        int ReadListWatch(WatchId id) const;
+        // Main thread: re-evaluates fully; the winner (-1 none), or -2 unknown / world not loaded
+        int RefreshListWatch(WatchId id);
+        // Any thread: {"winner", "rules": [{"state": "true|false|pending|unavailable|unread", "reason"}]}
+        nlohmann::json ReadListWatchState(WatchId id) const;
 
         // ── Value watches ────────────────────────────────────────────────────
         // `actor` null = the player. `callback` may be null: the watch then only keeps
@@ -155,6 +178,7 @@ namespace ConditionEngine {
             WatchCallback callback;
             EventDependency dependencies = EventDependency::None;
             EventDependency extraDependencies = EventDependency::None;  // the watch's own, kept on refresh
+            std::set<std::string> keys;  // value keys the condition reads
             std::chrono::milliseconds pollInterval{0};
             Clock::time_point lastEvaluated{};
             std::optional<bool> lastResult;
@@ -184,6 +208,7 @@ namespace ConditionEngine {
             RE::FormID actorId = 0;       // 0 = player (global values always use 0)
             EventDependency dependencies = EventDependency::None;
             EventDependency extraDependencies = EventDependency::None;  // union of its watches' extras
+            std::set<std::string> keys;  // value keys the value reads
             std::chrono::milliseconds interval{WatchOptions::kNever};  // shortest of its watches
             Clock::time_point lastSampled{};
             std::uint64_t checkedRevision = ~0ull;  // availability cache
@@ -205,6 +230,24 @@ namespace ConditionEngine {
             ValueStatus lastStatus = ValueStatus::Pending;
             std::vector<bool> above;              // per threshold
         };
+
+        struct ListEntry {
+            std::unique_ptr<FirstMatchList> list;  // main thread only
+            RE::FormID actorId = 0;
+            ListWatchCallback callback;
+            EventDependency extraDependencies = EventDependency::None;
+            std::chrono::milliseconds pollInterval{0};
+            Clock::time_point lastPolled{};
+            bool orphaned = false;
+            bool evaluated = false;
+            std::atomic<int> winner{-1};  // published for ReadListWatch
+            mutable std::mutex stateMutex;  // guards stateJson
+            nlohmann::json stateJson;
+        };
+        // Evaluates the lists `select` picks and fires callbacks. select returns the mode (0 skip,
+        // 1 incremental, 2 full = EvaluateAll) and the change bits for that list.
+        void EvaluateLists(const std::function<std::pair<int, EventDependency>(const ListEntry&)>& select,
+                           const std::set<std::string>* keys);
 
         // Samples the samplers `select` picks, then fires value callbacks
         void SampleValues(const std::function<bool(const Sampler&)>& select);
@@ -234,9 +277,17 @@ namespace ConditionEngine {
         std::unordered_map<std::string, std::shared_ptr<Sampler>> samplers_;
         std::atomic<std::int64_t> shortestValueIntervalMs_{0};  // 0 = no value watches
 
+        // List watches: lookups from any thread take listMutex_ shared
+        mutable std::shared_mutex listMutex_;
+        std::unordered_map<WatchId, std::shared_ptr<ListEntry>> lists_;
+
         // PostEvent queue
+        struct Posted {
+            EventDependency events = EventDependency::None;  // unkeyed bits (an unkeyed Value wakes all readers)
+            std::set<std::string> valueKeys;                  // keyed value changes
+        };
         std::mutex postMutex_;
-        std::unordered_map<RE::FormID, EventDependency> posted_;
+        std::unordered_map<RE::FormID, Posted> posted_;
         bool postQueued_ = false;
         std::atomic<bool> tickQueued_{false};
     };

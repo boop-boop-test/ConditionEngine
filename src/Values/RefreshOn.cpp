@@ -81,7 +81,9 @@ namespace ConditionEngine::RefreshOn {
         }
         for (const auto& call : calls) PapyrusCalls::Get().Expire(call, call.passActor ? actorId : 0);
 
-        Watcher::Get().PostEvent(EventDependency::Value, actor ? actorId : Watcher::kAllActors);
+        for (const auto& def : defs) {
+            Watcher::Get().PostValueChange("$" + Lower(def->name), actor ? actorId : Watcher::kAllActors);
+        }
         return defs.size();
     }
 

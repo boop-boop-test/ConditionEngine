@@ -320,54 +320,100 @@ namespace ConditionEngine {
         return bound_;
     }
 
+    namespace {
+        ValueResult ReadDefinition(const NamedValueDef& def, const EvaluationContext& context);
+
+        // A combined value's sources, highest priority first, then its own expression:
+        // the first available one answers; a pending one holds the result pending
+        ValueResult ReadProviders(const NamedValueDef& def, const std::vector<std::shared_ptr<const NamedValueDef>>& providers,
+                                  const EvaluationContext& context) {
+            std::string tried;
+            auto note = [&](const std::string& name, const ValueResult& r) {
+                if (!tried.empty()) tried += "; ";
+                tried += name + ": " + (r.reason.empty() ? ValueStatusName(r.status) : r.reason);
+            };
+            for (const auto& source : providers) {
+                auto r = ReadDefinition(*source, context);
+                if (r.Ok()) {
+                    r.from = source->name;
+                    return r;
+                }
+                if (r.status == ValueStatus::Pending) {
+                    return ValueResult::Fail(ValueStatus::Pending, "waiting for " + source->name +
+                                                                       (r.reason.empty() ? "" : " (" + r.reason + ")"));
+                }
+                note(source->name, r);
+            }
+            if (def.value) {
+                auto r = def.value->ReadCounted(context);
+                if (r.Ok()) {
+                    r.from = def.name + " (own expression)";
+                    return r;
+                }
+                if (r.status == ValueStatus::Pending) return r;
+                note(def.name + " (own expression)", r);
+            }
+            return ValueResult::Fail(ValueStatus::Unavailable,
+                                     tried.empty() ? "no source provides " + def.name : "no source available (" + tried + ")");
+        }
+
+        ValueResult ReadDefinition(const NamedValueDef& def, const EvaluationContext& context) {
+            auto& inProgress = context.valuesInProgress;
+            if (std::find(inProgress.begin(), inProgress.end(), &def) != inProgress.end()) {
+                return ValueResult::Fail(ValueStatus::Error, "circular named value: " + def.name);
+            }
+            inProgress.push_back(&def);
+            struct Leave {
+                const EvaluationContext& context;
+                ~Leave() { context.valuesInProgress.pop_back(); }
+            } leave{context};
+            std::string lowered;
+            const std::string& key = def.key.empty() ? (lowered = Lower(def.name)) : def.key;
+
+            ValueResult result;
+            const auto enabled = def.enabledWhen ? def.enabledWhen->EvaluateTriCounted(context) : TriResult::Of(true);
+            const bool disabled = enabled.state == TriState::False;
+            if (enabled.state == TriState::Pending) {
+                // Undecided is not "disabled": report what it waits for
+                result = ValueResult::Fail(ValueStatus::Pending, enabled.reason.empty() ? def.name + " is waiting" : enabled.reason);
+            } else if (enabled.state == TriState::Unavailable) {
+                result = ValueResult::Fail(ValueStatus::Unavailable, "enabledWhen cannot be read: " +
+                                                                         (enabled.reason.empty() ? std::string("unknown") : enabled.reason));
+            } else if (disabled) {
+                result = ValueResult::Fail(ValueStatus::Unavailable, def.name + " is not enabled for this actor");
+            } else if (auto pushed = PushedValues::Get().Read(def, context.GetActor())) {
+                result = std::move(*pushed);
+            } else if (auto providers = Registry::Get().ProvidersOf(key); !providers.empty()) {
+                result = ReadProviders(def, providers, context);
+            } else if (def.value) {
+                result = def.value->ReadCounted(context);
+            } else if (def.pushed) {
+                result = ValueResult::Fail(ValueStatus::Unavailable, PushedValues::Get().WhyMissing(def, context.GetActor()));
+            } else {
+                result = ValueResult::Fail(ValueStatus::Unavailable, "no source provides " + def.name);
+            }
+            if (def.graceSeconds > 0.0 && !disabled) {  // grace covers failed reads, not disabled actors
+                const auto slot = std::make_pair(key, def.global ? RE::FormID(0) : PushedValues::ActorKey(context.GetActor()));
+                std::lock_guard lock(g_lastGoodMutex);
+                if (result.Ok()) {
+                    g_lastGood[slot] = {result.value, result.sampledAt.value_or(ValueResult::Clock::now())};
+                } else if (auto it = g_lastGood.find(slot); it != g_lastGood.end() &&
+                           ValueResult::Clock::now() - it->second.at <= std::chrono::duration<double>(def.graceSeconds)) {
+                    // Within grace: the last good value, its age showing how stale it is
+                    auto held = ValueResult::Of(it->second.value);
+                    held.sampledAt = it->second.at;
+                    return held;
+                }
+            }
+            if (!result.Ok() && def.fallback) result.value = *def.fallback;
+            return result;
+        }
+    }
+
     ValueResult NamedValueRef::Read(const EvaluationContext& context) const {
         auto def = Bind();
         if (!def) return ValueResult::Fail(ValueStatus::Unavailable, "no value named " + name_);
-
-        auto& inProgress = context.valuesInProgress;
-        if (std::find(inProgress.begin(), inProgress.end(), def.get()) != inProgress.end()) {
-            return ValueResult::Fail(ValueStatus::Error, "circular named value: " + def->name);
-        }
-        inProgress.push_back(def.get());
-        struct Leave {
-            const EvaluationContext& context;
-            ~Leave() { context.valuesInProgress.pop_back(); }
-        } leave{context};
-        const std::string& key = def->key.empty() ? key_ : def->key;
-
-        ValueResult result;
-        const auto enabled = def->enabledWhen ? def->enabledWhen->EvaluateTriCounted(context) : TriResult::Of(true);
-        const bool disabled = enabled.state == TriState::False;
-        if (enabled.state == TriState::Pending) {
-            // Undecided is not "disabled": report what it waits for
-            result = ValueResult::Fail(ValueStatus::Pending, enabled.reason.empty() ? def->name + " is waiting" : enabled.reason);
-        } else if (enabled.state == TriState::Unavailable) {
-            result = ValueResult::Fail(ValueStatus::Unavailable,
-                                       "enabledWhen cannot be read: " + (enabled.reason.empty() ? std::string("unknown") : enabled.reason));
-        } else if (disabled) {
-            result = ValueResult::Fail(ValueStatus::Unavailable, def->name + " is not enabled for this actor");
-        } else if (auto pushed = PushedValues::Get().Read(*def, context.GetActor())) {
-            result = std::move(*pushed);
-        } else if (def->value) {
-            result = def->value->ReadCounted(context);
-        } else {
-            result = ValueResult::Fail(ValueStatus::Unavailable, PushedValues::Get().WhyMissing(*def, context.GetActor()));
-        }
-        if (def->graceSeconds > 0.0 && !disabled) {  // grace covers failed reads, not disabled actors
-            const auto slot = std::make_pair(key, def->global ? RE::FormID(0) : PushedValues::ActorKey(context.GetActor()));
-            std::lock_guard lock(g_lastGoodMutex);
-            if (result.Ok()) {
-                g_lastGood[slot] = {result.value, result.sampledAt.value_or(ValueResult::Clock::now())};
-            } else if (auto it = g_lastGood.find(slot); it != g_lastGood.end() &&
-                       ValueResult::Clock::now() - it->second.at <= std::chrono::duration<double>(def->graceSeconds)) {
-                // Within grace: the last good value, its age showing how stale it is
-                auto held = ValueResult::Of(it->second.value);
-                held.sampledAt = it->second.at;
-                return held;
-            }
-        }
-        if (!result.Ok() && def->fallback) result.value = *def->fallback;
-        return result;
+        return ReadDefinition(*def, context);
     }
 
     EventDependency NamedValueRef::GetEventDependencies() const {
@@ -378,12 +424,22 @@ namespace ConditionEngine {
         if (!guard.entered) return deps;
         if (def->value) deps |= def->value->GetEventDependencies();
         if (def->enabledWhen) deps |= def->enabledWhen->GetEffectiveEventDependencies();
+        for (const auto& source : Registry::Get().ProvidersOf(def->name)) {
+            deps |= NamedValueRef(source->name).GetEventDependencies();
+        }
         return deps;
     }
 
     bool NamedValueRef::ReadsActor() const {
         auto def = Bind();
-        return !def || !def->global;
+        if (!def) return true;
+        if (!def->global) return true;
+        // A combined value is per actor when any source is
+        auto providers = Registry::Get().ProvidersOf(def->name);
+        ResolvingGuard guard(def->key);
+        if (!guard.entered) return false;
+        return std::any_of(providers.begin(), providers.end(),
+                           [](const auto& p) { return NamedValueRef(p->name).ReadsActor(); });
     }
 
     std::vector<std::string> NamedValueRef::Validate() const {
@@ -472,6 +528,15 @@ namespace ConditionEngine {
         if (!requiresPlugins.empty()) j["requiresPlugins"] = requiresPlugins;
         if (!requiresDlls.empty()) j["requiresDlls"] = requiresDlls;
         if (!refreshOn.empty()) j["refreshOn"] = refreshOn;
+        if (!provides.empty()) {
+            j["provides"] = provides;
+            j["priority"] = priority;
+        }
+        if (auto providers = Registry::Get().ProvidersOf(name); !providers.empty()) {
+            json list = json::array();
+            for (const auto& p : providers) list.push_back({{"name", p->name}, {"priority", p->priority}, {"source", p->source}});
+            j["providers"] = std::move(list);
+        }
         if (!category.empty()) j["category"] = category;
         return j;
     }
@@ -525,6 +590,12 @@ namespace ConditionEngine {
             }
             def->requiresDlls = ReadStringList(definition, "requiresDlls");
             def->refreshOn = ReadStringList(definition, "refreshOn");
+            def->provides = ReadStringList(definition, "provides");
+            def->priority = definition.value("priority", 0.0);
+            for (const auto& target : def->provides) {
+                if (!IsValidName(target)) return fail("invalid provides name '" + target + "'");
+                if (Lower(target) == Lower(name)) return fail("a value cannot provide itself");
+            }
 
             const std::string scope = definition.value("scope", "auto");
             if (IEquals(scope, "actor")) def->scope = Scope::Actor;
@@ -572,8 +643,9 @@ namespace ConditionEngine {
             }
             if (!value) return fail(valueError.empty() ? "invalid value" : valueError);
             def->value = std::move(value);
-        } else if (!def->pushed) {
-            return fail("needs \"expr\" (or \"pushed\" for a value set from scripts)");
+        } else if (!def->pushed && !(definition.is_object() && definition.value("combined", false))) {
+            return fail("needs \"expr\" (or \"pushed\" for a value set from scripts, or \"combined\": true for "
+                        "a value read from its providers)");
         }
 
         switch (def->scope) {
@@ -581,7 +653,8 @@ namespace ConditionEngine {
             case Scope::Global: def->global = true; break;
             default: {
                 ResolvingGuard guard(Lower(name));  // a self-reference must not recurse
-                def->global = def->value ? !def->value->ReadsActor() : false;
+                const bool combined = definition.is_object() && definition.value("combined", false);
+                def->global = def->value ? !def->value->ReadsActor() : combined;
                 if (def->enabledWhen && DependsOnActor(def->enabledWhen->GetEventDependencies())) def->global = false;
                 break;
             }

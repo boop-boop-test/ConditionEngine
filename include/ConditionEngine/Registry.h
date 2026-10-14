@@ -86,6 +86,10 @@ namespace ConditionEngine {
         std::vector<std::string> requiresPlugins;
         std::vector<std::string> requiresDlls;         // must be loaded in the game process ("SomeNative.dll")
         std::vector<std::string> refreshOn;            // SKSE mod events that re-sample it (RefreshOn.h)
+        // Providers (issue 089): this value is a source for these combined values. Per
+        // actor, a combined value reads its highest-priority source that is available.
+        std::vector<std::string> provides;
+        double priority = 0.0;
         std::string source;                            // preset file, owner plugin, "papyrus", "implicit"
         std::string owner;                             // for Offer::Owner; defaults to source
         std::string expression;                        // value text when given as an expression
@@ -103,7 +107,8 @@ namespace ConditionEngine {
         // Parses a definition: expression text ("$a * 2"), a value JSON node, or an object
         // {"expr" | "value", "label", "unit", "range", "integer", "enabledWhen", "fallback",
         //  "scope", "pushed": {"default", "timeoutSeconds"}, "graceSeconds", "requiresPlugins",
-        //  "requiresDlls", "refreshOn", "category", "icon", "description", "offer", "tags", "owner"}.
+        //  "requiresDlls", "refreshOn", "provides", "priority", "category", "icon", "description",
+        //  "offer", "tags", "owner"}.
         // Returns null and fills `error` when it is invalid.
         static std::shared_ptr<NamedValueDef> Parse(const std::string& name, const nlohmann::json& definition,
                                                     const std::string& source, std::string* error);
@@ -218,6 +223,8 @@ namespace ConditionEngine {
         std::vector<std::shared_ptr<const NamedValueDef>> ListNamedValues() const;
         // Named values whose refreshOn lists this mod event (case-insensitive)
         std::vector<std::shared_ptr<const NamedValueDef>> ValuesRefreshedBy(std::string_view eventName) const;
+        // Sources of a combined value, highest priority first (ties by name)
+        std::vector<std::shared_ptr<const NamedValueDef>> ProvidersOf(const std::string& name) const;
 
         // ── Providers ────────────────────────────────────────────────────────
         void SetLoveSceneProvider(ActorFlagProvider provider);
@@ -239,7 +246,8 @@ namespace ConditionEngine {
         std::unordered_map<std::string, NamedEntry> named_;
         std::unordered_map<std::string, std::shared_ptr<const NamedValueDef>> namedValues_;  // lowercase keys
         std::unordered_map<std::string, std::vector<std::string>> refreshIndex_;  // lowercase event -> value keys
-        void RebuildRefreshIndex();  // with mutex_ held
+        std::unordered_map<std::string, std::vector<std::string>> providerIndex_;  // combined key -> source keys
+        void RebuildRefreshIndex();  // with mutex_ held; also rebuilds providerIndex_
         std::vector<NamedResolver> resolvers_;
         std::vector<CategoryInfo> categories_;
         std::unordered_map<std::string, std::string> sourceLabels_;  // lowercase id -> label

@@ -224,6 +224,31 @@ CONDITIONENGINE_API void ConditionEngine_Unwatch(CE_WatchHandle watch);
 /// Main thread. Re-evaluates a watch now (callback fires on change). Returns 1/0, or -1
 /// when the watch is unknown or the world is not loaded.
 CONDITIONENGINE_API int32_t ConditionEngine_Refresh(CE_WatchHandle watch);
+// ── List watches ─────────────────────────────────────────────────────────────
+// An ordered list of conditions for one actor, in priority order: the winner is the first
+// true one (its index), -1 when none is. After a change only what can move the result is
+// evaluated: touched rules above the winner, then the winner, and the rules below it only
+// when it turned false. A pending rule above the winner holds it (no flipping while
+// something loads); an unavailable rule counts as not matching. A change to one named
+// value wakes only the rules that read it, for that actor.
+
+/// Called on the main thread when the winner changes.
+typedef void (*CE_ListWatchFn)(CE_WatchHandle watch, void* actor, int32_t winner, void* userData);
+
+/// The condition handles are copied (release yours whenever). `fn` may be null: read the
+/// winner with ReadListWatch. options->pollIntervalMs is the full re-evaluation interval
+/// (for polled rules such as Game(...)). Unwatch with ConditionEngine_Unwatch.
+CONDITIONENGINE_API CE_WatchHandle ConditionEngine_WatchList(const CE_Handle* conditions, uint32_t count, void* actor,
+                                                             CE_ListWatchFn fn, void* userData,
+                                                             const CE_WatchOptions* options);
+/// ANY thread, non-blocking: the winner index, -1 none, -2 unknown watch.
+CONDITIONENGINE_API int32_t ConditionEngine_ReadListWatch(CE_WatchHandle watch);
+/// Main thread: re-evaluates every rule now. The winner, -1 none, -2 unknown / world not loaded.
+CONDITIONENGINE_API int32_t ConditionEngine_RefreshListWatch(CE_WatchHandle watch);
+/// Any thread, for debug panels: {"winner", "rules": [{"state": "true" | "false" | "pending" |
+/// "unavailable" | "unread", "reason"}]}. Empty string for an unknown watch.
+CONDITIONENGINE_API uint32_t ConditionEngine_ReadListWatchState(CE_WatchHandle watch, char* buf, uint32_t bufSize);
+
 /// Default full-poll interval for watches (initially ConditionEngine.ini, 10 s).
 CONDITIONENGINE_API void ConditionEngine_SetPollInterval(uint32_t milliseconds);
 CONDITIONENGINE_API uint32_t ConditionEngine_GetPollInterval(void);
@@ -262,7 +287,8 @@ typedef struct CE_ValueSample {
 CONDITIONENGINE_API CE_ValueHandle ConditionEngine_CompileValue(const char* source, char* errorBuf, uint32_t errorBufSize);
 CONDITIONENGINE_API void ConditionEngine_ReleaseValue(CE_ValueHandle value);
 /// Main thread. Reads now (async nodes return their latest sample) and writes why it is not
-/// OK into `reasonBuf` (empty when OK; may be null). CE_ERR_INVALID_HANDLE / CE_OK.
+/// OK into `reasonBuf` (may be null). When OK the buffer is empty, or for a combined value
+/// names the provider that answered ("from severactions_hunger"). CE_ERR_INVALID_HANDLE / CE_OK.
 CONDITIONENGINE_API CE_Result ConditionEngine_EvaluateValue(CE_ValueHandle value, void* actor, CE_ValueSample* out,
                                                             char* reasonBuf, uint32_t reasonBufSize);
 CONDITIONENGINE_API uint32_t ConditionEngine_GetValueDependencies(CE_ValueHandle value);
@@ -278,7 +304,13 @@ CONDITIONENGINE_API uint32_t ConditionEngine_ValidateValue(CE_ValueHandle value,
 ///    "enabledWhen": "<condition>", "scope": "auto" | "actor" | "global",
 ///    "pushed": true | {"default", "timeoutSeconds"}, "graceSeconds",
 ///    "requiresPlugins": [...], "requiresDlls": ["SomeNative.dll"], "refreshOn": ["ModEvent"],
+///    "provides": ["hunger"], "priority": 50, "combined": true,
 ///    "category", "icon", "description", "offer", "tags", "owner"}
+/// Providers: a value with "provides" is a source for those combined values. Per actor a
+/// combined value reads its highest-priority available source (ties by name), then its own
+/// "expr" if it has one; a pending higher source makes it pending; nothing available reads
+/// its fallback, or unavailable listing the sources tried. "combined": true declares one
+/// with no expression of its own; a source naming an undeclared one declares it.
 CONDITIONENGINE_API CE_Result ConditionEngine_RegisterNamedValue(const char* name, const char* definition, const char* owner,
                                                                  char* errorBuf, uint32_t errorBufSize);
 CONDITIONENGINE_API CE_Result ConditionEngine_UnregisterNamedValue(const char* name);
@@ -329,9 +361,9 @@ typedef void (*CE_ValueWatchFn)(CE_WatchHandle watch, void* actor, const CE_Valu
 /// for ReadValueWatch). Unwatch with ConditionEngine_Unwatch.
 CONDITIONENGINE_API CE_WatchHandle ConditionEngine_WatchValue(CE_ValueHandle value, void* actor, CE_ValueWatchFn fn,
                                                               void* userData, const CE_ValueWatchOptions* options);
-/// ANY thread, non-blocking, never touches game state: the latest sample, and why it is not
-/// OK in `reasonBuf` (may be null; empty when OK). The per-frame read. Returns 1, or 0 for an
-/// unknown watch.
+/// ANY thread, non-blocking, never touches game state: the latest sample, and in `reasonBuf`
+/// (may be null) why it is not OK, or when OK which provider answered ("from x", empty for
+/// plain values). The per-frame read. Returns 1, or 0 for an unknown watch.
 CONDITIONENGINE_API int32_t ConditionEngine_ReadValueWatch(CE_WatchHandle watch, CE_ValueSample* out, char* reasonBuf,
                                                            uint32_t reasonBufSize);
 /// Main thread: samples now, then returns it like ReadValueWatch. 0 when unknown / world not loaded.

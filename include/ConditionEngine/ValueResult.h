@@ -29,13 +29,14 @@ namespace ConditionEngine {
         double value = 0.0;
         ValueStatus status = ValueStatus::Ok;
         std::string reason;                       // set when status != Ok
+        std::string from;                         // combined values: the provider that answered
         std::optional<Clock::time_point> sampledAt;  // nullopt = read live just now
 
         bool Ok() const { return status == ValueStatus::Ok; }
 
         static ValueResult Of(double v) { return ValueResult{v}; }
         static ValueResult Fail(ValueStatus status, std::string reason, double fallback = 0.0) {
-            return ValueResult{fallback, status, std::move(reason), std::nullopt};
+            return ValueResult{fallback, status, std::move(reason), {}, std::nullopt};
         }
     };
 

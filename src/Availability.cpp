@@ -117,6 +117,28 @@ namespace ConditionEngine {
             const auto key = "$" + Lower(name);
             if (!names.insert(key).second) return {AvailabilityState::Unavailable, "Circular named value: " + name};
             if (auto def = Registry::Get().FindNamedValue(name)) {
+                if (auto providers = Registry::Get().ProvidersOf(name); !providers.empty()) {
+                    // Combined: available when any source (or its own expression) is
+                    AvailabilityStatus none{AvailabilityState::Unavailable, ""};
+                    bool any = false;
+                    for (const auto& source : providers) {
+                        auto status = CheckValueNode(json{{"type", "NamedValue"}, {"name", source->name}}, names, depth + 1);
+                        if (status.Ready()) {
+                            any = true;
+                            break;
+                        }
+                        Merge(none, status);
+                    }
+                    if (!any && def->value) {
+                        auto status = CheckValueNode(def->value->ToJson(), names, depth + 1);
+                        any = status.Ready();
+                        Merge(none, status);
+                    }
+                    names.erase(key);
+                    if (any) return result;
+                    if (none.reason.empty()) none.reason = "no source available for " + name;
+                    return none;
+                }
                 for (const auto& plugin : def->requiresPlugins) Merge(result, PluginStatus(plugin));
                 for (const auto& dll : def->requiresDlls) {
                     if (!GetModuleHandleA(dll.c_str())) Merge(result, {AvailabilityState::Unavailable, dll + " is not loaded"});

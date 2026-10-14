@@ -198,6 +198,7 @@ namespace ConditionEngine {
         Entry entry;
         entry.dependencies = condition->GetEffectiveEventDependencies() | options.extraDependencies;
         entry.extraDependencies = options.extraDependencies;
+        entry.keys = CollectValueKeys(condition->ToJsonComplete());
         entry.condition = std::move(condition);
         entry.actorId = ActorKey(actor);
         entry.callback = std::move(callback);
@@ -234,6 +235,10 @@ namespace ConditionEngine {
             std::lock_guard lock(mutex_);
             if (entries_.erase(id) > 0) return;
         }
+        {
+            std::unique_lock lock(listMutex_);
+            if (lists_.erase(id) > 0) return;
+        }
         std::unique_lock lock(valueMutex_);
         auto it = valueEntries_.find(id);
         if (it == valueEntries_.end()) return;
@@ -258,6 +263,10 @@ namespace ConditionEngine {
             std::lock_guard lock(mutex_);
             count = entries_.size();
         }
+        {
+            std::shared_lock lock(listMutex_);
+            count += lists_.size();
+        }
         return count + GetValueWatchCount();
     }
 
@@ -266,6 +275,12 @@ namespace ConditionEngine {
         {
             std::lock_guard lock(mutex_);
             if (std::any_of(entries_.begin(), entries_.end(), [key](const auto& kv) { return kv.second.actorId == key; })) {
+                return true;
+            }
+        }
+        {
+            std::shared_lock lock(listMutex_);
+            if (std::any_of(lists_.begin(), lists_.end(), [key](const auto& kv) { return kv.second->actorId == key; })) {
                 return true;
             }
         }
@@ -289,26 +304,45 @@ namespace ConditionEngine {
             std::lock_guard lock(mutex_);
             for (auto& [id, entry] : entries_) {
                 entry.dependencies = entry.condition->GetEffectiveEventDependencies() | entry.extraDependencies;
+                entry.keys = CollectValueKeys(entry.condition->ToJsonComplete());
             }
+        }
+        {
+            std::shared_lock lock(listMutex_);
+            for (auto& [id, list] : lists_) list->list->RefreshDependencies();
         }
         std::shared_lock lock(valueMutex_);
         for (auto& [key, sampler] : samplers_) {
             sampler->dependencies = sampler->value->GetEventDependencies() | EventDependency::Value |
                                     EventDependency::Availability | sampler->extraDependencies;
+            sampler->keys = CollectValueKeys(sampler->value->ToJson());
         }
     }
 
-    void Watcher::NotifyEvent(EventDependency events, RE::Actor* actor) {
+    void Watcher::NotifyEvent(EventDependency events, RE::Actor* actor) { NotifyEvent(events, actor, nullptr); }
+
+    void Watcher::NotifyEvent(EventDependency events, RE::Actor* actor, const std::set<std::string>* keys) {
         if (!IsWorldReady()) return;
         RefreshDependencies();
         const RE::FormID only = actor ? ActorKey(actor) : kAnyActor;
-        Evaluate([events, only](WatchId, const Entry& entry) {
-            return HasDependency(entry.dependencies, events) && (only == kAnyActor || entry.actorId == only);
+        Evaluate([events, only, keys](WatchId, const Entry& entry) {
+            return (only == kAnyActor || entry.actorId == only) && ChangeTouches(entry.dependencies, entry.keys, events, keys);
         });
-        SampleValues([events, only](const Sampler& sampler) {
+        EvaluateLists(
+            [events, only, keys](const ListEntry& entry) -> std::pair<int, EventDependency> {
+                if (only != kAnyActor && entry.actorId != only) return {0, events};
+                const auto plain = keys ? static_cast<EventDependency>(static_cast<std::uint32_t>(events) &
+                                                                       ~static_cast<std::uint32_t>(EventDependency::Value))
+                                        : events;
+                const bool touched = HasDependency(entry.list->ListenedDependencies(), plain) ||
+                                     (keys && HasDependency(events, EventDependency::Value) && entry.list->ListensToKeys(*keys));
+                return {touched ? 1 : 0, events};
+            },
+            keys);
+        SampleValues([events, only, keys](const Sampler& sampler) {
             // Global values answer for every actor
-            return HasDependency(sampler.dependencies, events) &&
-                   (only == kAnyActor || sampler.actorId == only || !sampler.value->ReadsActor());
+            return (only == kAnyActor || sampler.actorId == only || !sampler.value->ReadsActor()) &&
+                   ChangeTouches(sampler.dependencies, sampler.keys, events, keys);
         });
     }
 
@@ -318,7 +352,28 @@ namespace ConditionEngine {
         bool schedule;
         {
             std::lock_guard lock(postMutex_);
-            posted_[key] |= events;
+            posted_[key].events |= events;
+            Stats::CountPostedEvent();
+            schedule = !postQueued_;
+            postQueued_ = true;
+        }
+        if (!schedule) return;
+        if (auto* tasks = SKSE::GetTaskInterface()) {
+            tasks->AddTask([]() { Watcher::Get().DrainPosted(); });
+        } else {
+            std::lock_guard lock(postMutex_);
+            posted_.clear();
+            postQueued_ = false;
+        }
+    }
+
+    void Watcher::PostValueChange(std::string valueKey, RE::FormID actorFormId) {
+        if (GetWatchCount() == 0) return;
+        const RE::FormID key = actorFormId == kAllActors ? kAnyActor : (actorFormId == 0x14 ? 0 : actorFormId);
+        bool schedule;
+        {
+            std::lock_guard lock(postMutex_);
+            posted_[key].valueKeys.insert(std::move(valueKey));
             Stats::CountPostedEvent();
             schedule = !postQueued_;
             postQueued_ = true;
@@ -334,19 +389,23 @@ namespace ConditionEngine {
     }
 
     void Watcher::DrainPosted() {
-        std::unordered_map<RE::FormID, EventDependency> posted;
+        std::unordered_map<RE::FormID, Posted> posted;
         {
             std::lock_guard lock(postMutex_);
             posted.swap(posted_);
             postQueued_ = false;
         }
         Stats::CountDrain();
+        auto deliver = [this](const Posted& p, RE::Actor* actor) {
+            if (p.events != EventDependency::None) NotifyEvent(p.events, actor, nullptr);
+            if (!p.valueKeys.empty()) NotifyEvent(EventDependency::Value, actor, &p.valueKeys);
+        };
         if (auto it = posted.find(kAnyActor); it != posted.end()) {
-            NotifyEvent(it->second, nullptr);
+            deliver(it->second, nullptr);
             posted.erase(it);
         }
-        for (const auto& [key, events] : posted) {
-            if (auto* actor = ResolveActor(key)) NotifyEvent(events, actor);
+        for (const auto& [key, p] : posted) {
+            if (auto* actor = ResolveActor(key)) deliver(p, actor);
         }
     }
 
@@ -411,6 +470,10 @@ namespace ConditionEngine {
             std::shared_lock lock(valueMutex_);
             for (const auto& [key, sampler] : samplers_) watched.insert(sampler->actorId);
         }
+        {
+            std::shared_lock lock(listMutex_);
+            for (const auto& [id, list] : lists_) watched.insert(list->actorId);
+        }
 
         std::unordered_map<RE::FormID, EventDependency> actorEvents;
         for (auto id : watched) {
@@ -446,6 +509,19 @@ namespace ConditionEngine {
             const auto interval = entry.pollInterval.count() == 0 ? defaultInterval : entry.pollInterval;
             return interval != WatchOptions::kNever && now - entry.lastEvaluated >= interval;
         });
+        // Lists: a due poll re-evaluates fully (polled rules may have changed); otherwise the
+        // actor's detected changes re-evaluate what they touch
+        EvaluateLists(
+            [&](const ListEntry& entry) -> std::pair<int, EventDependency> {
+                const auto interval = entry.pollInterval.count() == 0 ? defaultInterval : entry.pollInterval;
+                if (!entry.evaluated || (interval != WatchOptions::kNever && now - entry.lastPolled >= interval)) {
+                    return {2, EventDependency::None};
+                }
+                auto it = actorEvents.find(entry.actorId);
+                const auto changed = it != actorEvents.end() ? it->second : worldEvents;
+                return {HasDependency(entry.list->ListenedDependencies(), changed) ? 1 : 0, changed};
+            },
+            nullptr);
         // Event-driven value samples (world changes reach global values too)
         SampleValues([&](const Sampler& sampler) {
             if (sampler.lastSampled >= tickStart) return false;  // sampled this tick already
@@ -569,6 +645,7 @@ namespace ConditionEngine {
                 slot->actorId = actorId;
                 slot->dependencies = slot->value->GetEventDependencies() | EventDependency::Value |
                                      EventDependency::Availability;
+                slot->keys = CollectValueKeys(slot->value->ToJson());
                 fresh = true;
             }
             sampler = slot;
@@ -666,6 +743,7 @@ namespace ConditionEngine {
             if (!keepValue || !sample.sampledAt) sample.value = result.value;
             sample.status = result.status;
             sample.reason = std::move(result.reason);
+            sample.from = std::move(result.from);
             sample.sampledAt = result.sampledAt.value_or(now);
             sample.availabilityRevision = revision;
         }
@@ -742,12 +820,167 @@ namespace ConditionEngine {
         }
     }
 
+    // ── List watches ─────────────────────────────────────────────────────────
+
+    namespace {
+        const char* TriName(TriState state) {
+            switch (state) {
+                case TriState::True: return "true";
+                case TriState::Pending: return "pending";
+                case TriState::Unavailable: return "unavailable";
+                default: return "false";
+            }
+        }
+    }
+
+    WatchId Watcher::WatchList(std::vector<std::shared_ptr<const Condition>> rules, RE::Actor* actor,
+                               ListWatchCallback callback, const WatchOptions& options) {
+        if (rules.empty()) return 0;
+        auto entry = std::make_shared<ListEntry>();
+        entry->list = std::make_unique<FirstMatchList>(std::move(rules));
+        entry->actorId = ActorKey(actor);
+        entry->callback = std::move(callback);
+        entry->extraDependencies = options.extraDependencies;
+        entry->pollInterval = options.pollInterval;
+        entry->stateJson = {{"winner", -1}, {"rules", nlohmann::json::array()}};
+
+        WatchId id;
+        {
+            std::lock_guard idLock(mutex_);  // all watch kinds share ids
+            id = nextId_++;
+            if (nextId_ == 0) nextId_ = 1;
+        }
+        {
+            std::unique_lock lock(listMutex_);
+            lists_.emplace(id, entry);
+        }
+        if (IsWorldReady()) {
+            const bool fire = options.fireImmediately;
+            EvaluateLists([&](const ListEntry& e) { return std::pair{&e == entry.get() ? 2 : 0, EventDependency::None}; },
+                          nullptr);
+            if (fire && entry->callback) entry->callback(id, ResolveActor(entry->actorId), entry->winner.load());
+        }
+        return id;
+    }
+
+    int Watcher::ReadListWatch(WatchId id) const {
+        std::shared_lock lock(listMutex_);
+        auto it = lists_.find(id);
+        return it == lists_.end() ? -2 : it->second->winner.load(std::memory_order_acquire);
+    }
+
+    int Watcher::RefreshListWatch(WatchId id) {
+        if (!IsWorldReady()) return -2;
+        std::shared_ptr<ListEntry> entry;
+        {
+            std::shared_lock lock(listMutex_);
+            auto it = lists_.find(id);
+            if (it == lists_.end()) return -2;
+            entry = it->second;
+        }
+        EvaluateLists([&](const ListEntry& e) { return std::pair{&e == entry.get() ? 2 : 0, EventDependency::None}; },
+                      nullptr);
+        return entry->winner.load();
+    }
+
+    nlohmann::json Watcher::ReadListWatchState(WatchId id) const {
+        std::shared_ptr<ListEntry> entry;
+        {
+            std::shared_lock lock(listMutex_);
+            auto it = lists_.find(id);
+            if (it == lists_.end()) return nullptr;
+            entry = it->second;
+        }
+        std::lock_guard lock(entry->stateMutex);
+        return entry->stateJson;
+    }
+
+    void Watcher::EvaluateLists(const std::function<std::pair<int, EventDependency>(const ListEntry&)>& select,
+                                const std::set<std::string>* keys) {
+        struct Work {
+            std::shared_ptr<ListEntry> entry;
+            int mode;
+            EventDependency changed;
+        };
+        std::vector<Work> work;
+        {
+            std::shared_lock lock(listMutex_);
+            for (const auto& [id, entry] : lists_) {
+                if (entry->orphaned) continue;
+                if (const auto [mode, changed] = select(*entry); mode != 0) work.push_back({entry, mode, changed});
+            }
+        }
+        if (work.empty()) return;
+
+        struct Fire {
+            ListWatchCallback callback;
+            WatchId id;
+            RE::FormID actorId;
+            int winner;
+        };
+        std::vector<Fire> toFire;
+        std::unordered_map<RE::FormID, std::unique_ptr<EvaluationContext>> contexts;
+        const auto now = Clock::now();
+        for (auto& [entry, mode, changed] : work) {
+            auto* target = ResolveActor(entry->actorId);
+            if (!target || !target->Is3DLoaded()) continue;
+            auto& context = contexts[entry->actorId];
+            if (!context) context = std::make_unique<EvaluationContext>(target);
+
+            const int before = entry->evaluated ? entry->winner.load() : -3;
+            const int after = mode == 2 ? entry->list->EvaluateAll(*context)
+                                        : entry->list->EvaluateChanged(*context, changed | entry->extraDependencies, keys);
+            if (mode == 2) entry->lastPolled = now;
+            entry->evaluated = true;
+            entry->winner.store(after, std::memory_order_release);
+
+            nlohmann::json rules = nlohmann::json::array();
+            const auto& states = entry->list->States();
+            const auto& seen = entry->list->Evaluated();
+            for (std::size_t i = 0; i < states.size(); ++i) {
+                nlohmann::json rule{{"state", seen[i] ? TriName(states[i].state) : "unread"}};
+                if (!states[i].reason.empty()) rule["reason"] = states[i].reason;
+                rules.push_back(std::move(rule));
+            }
+            {
+                std::lock_guard lock(entry->stateMutex);
+                entry->stateJson = {{"winner", after}, {"rules", std::move(rules)}};
+            }
+            if (before != -3 && before != after && entry->callback) {
+                WatchId id = 0;
+                {
+                    std::shared_lock lock(listMutex_);
+                    for (const auto& [candidate, e] : lists_) {
+                        if (e == entry) id = candidate;
+                    }
+                }
+                toFire.push_back({entry->callback, id, entry->actorId, after});
+            }
+        }
+        for (const auto& fire : toFire) {
+            try {
+                fire.callback(fire.id, ResolveActor(fire.actorId), fire.winner);
+            } catch (const std::exception& e) {
+                SKSE::log::error("ConditionEngine: list watch {} callback threw: {}", fire.id, e.what());
+            }
+        }
+    }
+
     void Watcher::OnGameLoad() {
         auto isCreated = [](RE::FormID id) { return (id & 0xFF000000u) == 0xFF000000u; };
         {
             std::lock_guard lock(mutex_);
             for (auto& [id, entry] : entries_) {
                 if (isCreated(entry.actorId)) entry.orphaned = true;
+            }
+        }
+        {
+            std::shared_lock lock(listMutex_);
+            for (auto& [id, entry] : lists_) {
+                if (isCreated(entry->actorId)) {
+                    entry->orphaned = true;
+                    entry->winner.store(-1);
+                }
             }
         }
         std::vector<std::shared_ptr<Sampler>> orphaned;

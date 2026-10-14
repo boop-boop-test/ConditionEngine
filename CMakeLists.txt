@@ -52,6 +52,7 @@ set(CONDITION_ENGINE_HEADERS
     include/ConditionEngine/EvaluationContext.h
     include/ConditionEngine/Export.h
     include/ConditionEngine/Expression.h
+    include/ConditionEngine/FirstMatchList.h
     include/ConditionEngine/Forms.h
     include/ConditionEngine/Presets.h
     include/ConditionEngine/Registry.h
@@ -96,6 +97,7 @@ set(CONDITION_ENGINE_SOURCES
     src/Condition.cpp
     src/EvaluationContext.cpp
     src/Expression.cpp
+    src/FirstMatchList.cpp
     src/Forms.cpp
     src/Presets.cpp
     src/Registry.cpp

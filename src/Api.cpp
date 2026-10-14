@@ -94,6 +94,23 @@ namespace {
         }
     }
 
+    // CE_WatchOptions -> WatchOptions; fields are read only when the caller's struct holds them
+    WatchOptions ReadWatchOptions(const CE_WatchOptions* options) {
+        WatchOptions watchOptions;
+        auto has = [options](std::size_t end) { return options && options->structSize >= end; };
+        if (has(offsetof(CE_WatchOptions, fireImmediately) + sizeof(int32_t))) {
+            watchOptions.fireImmediately = options->fireImmediately != 0;
+        }
+        if (has(offsetof(CE_WatchOptions, pollIntervalMs) + sizeof(uint32_t))) {
+            watchOptions.pollInterval = options->pollIntervalMs == CE_POLL_NEVER ? WatchOptions::kNever
+                                                                                 : std::chrono::milliseconds(options->pollIntervalMs);
+        }
+        if (has(offsetof(CE_WatchOptions, extraDependencies) + sizeof(uint32_t))) {
+            watchOptions.extraDependencies = static_cast<EventDependency>(options->extraDependencies);
+        }
+        return watchOptions;
+    }
+
     CE_ValueSample ToCSample(const ValueSample& sample) {
         CE_ValueSample out{};
         out.structSize = sizeof(CE_ValueSample);
@@ -544,22 +561,7 @@ CONDITIONENGINE_API CE_WatchHandle ConditionEngine_Watch(CE_Handle handle, void*
                                                            const CE_WatchOptions* options) {
     auto condition = Lookup(handle);
     if (!condition || !fn) return 0;
-
-    WatchOptions watchOptions;
-    // Fields are read only when the caller's struct is large enough to contain them
-    auto has = [options](std::size_t end) { return options && options->structSize >= end; };
-    if (has(offsetof(CE_WatchOptions, fireImmediately) + sizeof(int32_t))) {
-        watchOptions.fireImmediately = options->fireImmediately != 0;
-    }
-    if (has(offsetof(CE_WatchOptions, pollIntervalMs) + sizeof(uint32_t))) {
-        watchOptions.pollInterval = options->pollIntervalMs == CE_POLL_NEVER
-                                        ? WatchOptions::kNever
-                                        : std::chrono::milliseconds(options->pollIntervalMs);
-    }
-    if (has(offsetof(CE_WatchOptions, extraDependencies) + sizeof(uint32_t))) {
-        watchOptions.extraDependencies = static_cast<EventDependency>(options->extraDependencies);
-    }
-
+    const auto watchOptions = ReadWatchOptions(options);
     return Watcher::Get().Watch(
         condition, static_cast<RE::Actor*>(actor),
         [fn, userData](WatchId id, RE::Actor* target, bool result) { fn(id, target, result ? 1 : 0, userData); },
@@ -569,6 +571,36 @@ CONDITIONENGINE_API CE_WatchHandle ConditionEngine_Watch(CE_Handle handle, void*
 CONDITIONENGINE_API int32_t ConditionEngine_Refresh(CE_WatchHandle watch) {
     auto result = Watcher::Get().Refresh(watch);
     return result.has_value() ? (*result ? 1 : 0) : -1;
+}
+
+CONDITIONENGINE_API CE_WatchHandle ConditionEngine_WatchList(const CE_Handle* conditions, uint32_t count, void* actor,
+                                                             CE_ListWatchFn fn, void* userData,
+                                                             const CE_WatchOptions* options) {
+    if (!conditions || count == 0) return 0;
+    std::vector<std::shared_ptr<const Condition>> rules;
+    rules.reserve(count);
+    for (uint32_t i = 0; i < count; ++i) {
+        auto condition = Lookup(conditions[i]);
+        if (!condition) return 0;
+        rules.push_back(std::move(condition));  // copied: the host may release its handles
+    }
+    ListWatchCallback callback;
+    if (fn) {
+        callback = [fn, userData](WatchId id, RE::Actor* target, int winner) { fn(id, target, winner, userData); };
+    }
+    return Watcher::Get().WatchList(std::move(rules), static_cast<RE::Actor*>(actor), std::move(callback),
+                                    ReadWatchOptions(options));
+}
+
+CONDITIONENGINE_API int32_t ConditionEngine_ReadListWatch(CE_WatchHandle watch) { return Watcher::Get().ReadListWatch(watch); }
+
+CONDITIONENGINE_API int32_t ConditionEngine_RefreshListWatch(CE_WatchHandle watch) {
+    return Watcher::Get().RefreshListWatch(watch);
+}
+
+CONDITIONENGINE_API uint32_t ConditionEngine_ReadListWatchState(CE_WatchHandle watch, char* buf, uint32_t bufSize) {
+    const auto state = Watcher::Get().ReadListWatchState(watch);
+    return WriteString(state.is_null() ? std::string{} : state.dump(), buf, bufSize);
 }
 
 CONDITIONENGINE_API void ConditionEngine_SetPollInterval(uint32_t milliseconds) {
@@ -631,7 +663,8 @@ CONDITIONENGINE_API CE_Result ConditionEngine_EvaluateValue(CE_ValueHandle handl
     sample.sampledAt = result.sampledAt.value_or(ValueSample::Clock::now());
     sample.availabilityRevision = Availability::Get().Revision();
     WriteSample(sample, out);
-    WriteString(result.Ok() ? std::string{} : result.reason, reasonBuf, reasonBufSize);
+    WriteString(result.Ok() ? (result.from.empty() ? std::string{} : "from " + result.from) : result.reason, reasonBuf,
+                reasonBufSize);
     return CE_OK;
 }
 
@@ -771,7 +804,9 @@ CONDITIONENGINE_API int32_t ConditionEngine_ReadValueWatch(CE_WatchHandle watch,
         return 0;
     }
     WriteSample(sample, out);
-    WriteString(sample.status == ValueStatus::Ok ? std::string{} : sample.reason, reasonBuf, reasonBufSize);
+    WriteString(sample.status == ValueStatus::Ok ? (sample.from.empty() ? std::string{} : "from " + sample.from)
+                                                 : sample.reason,
+                reasonBuf, reasonBufSize);
     return 1;
 }
 

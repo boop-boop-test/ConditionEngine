@@ -4,6 +4,7 @@
 #include "ConditionEngine/ConditionEngine.h"
 #include "ConditionEngine/Availability.h"
 #include "ConditionEngine/Expression.h"
+#include "ConditionEngine/FirstMatchList.h"
 #include "ConditionEngine/Stats.h"
 #include "ConditionEngine/Values/PushedValues.h"
 #include "ConditionEngine/Values/RefreshOn.h"
@@ -515,6 +516,135 @@ void RunValueTests(CheckFn check) {
         Check(valuesOnly["types"].empty() && !valuesOnly["namedValues"].empty(), "include limits the sections");
 
         registry.UnregisterNamed("cat_talking");
+    }
+
+    // ── Providers: combined values by priority (issue 089) ───────────────────
+    {
+        Define("prov_low", json{{"pushed", true}, {"provides", "pv_hunger"}, {"priority", 10}});
+        Define("prov_high", json{{"pushed", true}, {"provides", {"pv_hunger"}}, {"priority", 50}});
+        Check(registry.FindNamedValue("pv_hunger") != nullptr, "a source declares its combined value implicitly");
+        auto r = Read("$pv_hunger");
+        Check(r.status == ValueStatus::Unavailable && r.reason.find("prov_high") != std::string::npos &&
+                  r.reason.find("prov_low") != std::string::npos,
+              "nothing available lists the sources tried: " + r.reason);
+        pushed.Set(nullptr, "prov_low", 10);
+        r = Read("$pv_hunger");
+        Check(r.Ok() && r.value == 10 && r.from == "prov_low", "the only available source answers");
+        pushed.Set(nullptr, "prov_high", 70);
+        r = Read("$pv_hunger");
+        Check(r.Ok() && r.value == 70 && r.from == "prov_high", "the higher priority source wins");
+        pushed.Clear(nullptr, "prov_high");
+        r = Read("$pv_hunger");
+        Check(r.Ok() && r.value == 10 && r.from == "prov_low", "falls back to the next source");
+
+        Define("prov_pending", json{{"expr", "TestPendingValue"}, {"provides", "pv_hunger"}, {"priority", 100}});
+        r = Read("$pv_hunger");
+        Check(r.status == ValueStatus::Pending && r.reason.find("prov_pending") != std::string::npos,
+              "a pending higher source holds the result pending: " + r.reason);
+        registry.UnregisterNamedValue("prov_pending");
+
+        Define("prov_tie_b", json{{"expr", "2"}, {"provides", "pv_tie"}, {"priority", 5}});
+        Define("prov_tie_a", json{{"expr", "1"}, {"provides", "pv_tie"}, {"priority", 5}});
+        Check(Read("$pv_tie").from == "prov_tie_a", "ties are broken by name");
+
+        Define("pv_cold", json{{"expr", "5"}, {"label", "Cold"}});
+        Define("cold_src", json{{"pushed", true}, {"provides", "pv_cold"}});
+        r = Read("$pv_cold");
+        Check(r.Ok() && r.value == 5 && r.from.find("own expression") != std::string::npos,
+              "a declared combined value's own expr is the last source");
+        pushed.Set(nullptr, "cold_src", 9);
+        Check(Read("$pv_cold").value == 9, "a provider beats the own expression");
+
+        Define("pv_fatigue", json{{"combined", true}, {"fallback", 3}});
+        r = Read("$pv_fatigue");
+        Check(r.status == ValueStatus::Unavailable && r.value == 3 && r.reason.find("no source provides") != std::string::npos,
+              "a combined value with no source reads its fallback");
+
+        std::string error;
+        Check(!NamedValueDef::Parse("self_source", json{{"expr", "1"}, {"provides", "self_source"}}, "t", &error),
+              "a value cannot provide itself");
+
+        auto value = Expression::CompileValueAny("$pv_hunger", &error);
+        Check(value && Availability::Get().CheckValue(*value).Ready(), "a combined value is available while a source is");
+        Check(Read("$pv_hunger > 5").value == 1, "combined values work in comparisons");
+
+        const auto catalog = registry.GetCatalog();
+        json combined;
+        for (const auto& v : catalog["namedValues"]) {
+            if (v["name"] == "pv_hunger") combined = v;
+        }
+        Check(combined.contains("providers") && combined["providers"].size() == 2 &&
+                  combined["providers"][0]["name"] == "prov_high",
+              "the catalog lists sources, highest first: " + combined.dump());
+        pushed.ClearAll();
+    }
+
+    // ── First-match lists (issue 090) ────────────────────────────────────────
+    {
+        // A rule whose state the test sets
+        struct Switch : Condition {
+            TriState* state;
+            EventDependency deps;
+            Switch(TriState* s, EventDependency d) : state(s), deps(d) {}
+            bool Evaluate(const EvaluationContext&) const override { return *state == TriState::True; }
+            TriResult EvaluateTri(const EvaluationContext&) const override { return {*state, "test"}; }
+            std::string GetDescription() const override { return "switch"; }
+            nlohmann::json ToJson() const override { return {{"type", "Constant"}, {"value", true}}; }
+            std::unique_ptr<Condition> Clone() const override { return std::make_unique<Switch>(state, deps); }
+            EventDependency GetEventDependencies() const override { return deps; }
+        };
+        TriState a = TriState::False, b = TriState::True, c = TriState::True;
+        FirstMatchList list({std::make_shared<Switch>(&a, EventDependency::Time),
+                             std::make_shared<Switch>(&b, EventDependency::Weather),
+                             std::make_shared<Switch>(&c, EventDependency::Location)});
+        EvaluationContext context(nullptr);
+        Check(list.EvaluateAll(context) == 1 && list.EvaluationCount() == 2, "first true rule wins, the rest unread");
+        auto count = list.EvaluationCount();
+        Check(list.EvaluateChanged(context, EventDependency::Location) == 1 && list.EvaluationCount() == count,
+              "a change below the winner evaluates nothing");
+        a = TriState::True;
+        Check(list.EvaluateChanged(context, EventDependency::Time) == 0, "a rule above that turns true wins");
+        a = TriState::False;
+        Check(list.EvaluateChanged(context, EventDependency::Time) == 1, "the winner turning false scans down");
+        a = TriState::Pending;
+        Check(list.EvaluateChanged(context, EventDependency::Time) == 1, "a pending rule above holds the winner");
+        a = TriState::False;
+        b = TriState::False;
+        Check(list.EvaluateChanged(context, EventDependency::Weather) == 2, "the next true rule below takes over");
+        c = TriState::Unavailable;
+        Check(list.EvaluateChanged(context, EventDependency::Location) == -1, "unavailable counts as not matching");
+        Check(HasDependency(list.ListenedDependencies(), EventDependency::Location), "no winner: listens to every rule");
+        c = TriState::True;
+        list.EvaluateAll(context);
+        Check(HasDependency(list.ListenedDependencies(), EventDependency::Location),
+              "winner 2: listens to rules 0..2");
+        b = TriState::True;
+        list.EvaluateAll(context);
+        Check(!HasDependency(list.ListenedDependencies(), EventDependency::Location),
+              "winner 1: the rule below is not listened to");
+
+        // Keyed value changes wake only rules that read the value
+        Define("lk_a", json{{"pushed", true}});
+        Define("lk_b", json{{"pushed", true}});
+        std::string error;
+        FirstMatchList keyed({std::shared_ptr<const Condition>(Expression::CompileAny("$lk_a > 5", &error)),
+                              std::shared_ptr<const Condition>(Expression::CompileAny("$lk_b > 5", &error))});
+        pushed.Set(nullptr, "lk_b", 9);
+        Check(keyed.EvaluateAll(context) == 1, "keyed list: second rule wins");
+        pushed.Set(nullptr, "lk_a", 9);
+        const std::set<std::string> other{"$somethingelse"};
+        count = keyed.EvaluationCount();
+        Check(keyed.EvaluateChanged(context, EventDependency::Value, &other) == 1 && keyed.EvaluationCount() == count,
+              "a change to another value evaluates nothing");
+        const std::set<std::string> touched{"$lk_a"};
+        Check(keyed.EvaluateChanged(context, EventDependency::Value, &touched) == 0, "the keyed change reaches its rule");
+        Check(keyed.ListensToKeys(touched) && !keyed.ListensToKeys(std::set<std::string>{"$lk_b"}),
+              "winner 0 listens only to its own keys");
+        pushed.ClearAll();
+
+        const auto keys = CollectValueKeys(Expression::CompileAny("$pv_hunger > 1", &error)->ToJsonComplete());
+        Check(keys.contains("$pv_hunger") && keys.contains("$prov_high") && keys.contains("$prov_low"),
+              "value keys follow combined values to their sources");
     }
 
     // ── refreshOn (issue 089) ────────────────────────────────────────────────

@@ -566,6 +566,17 @@ namespace ConditionEngine {
 
     void Registry::RegisterNamedValue(std::shared_ptr<const NamedValueDef> definition) {
         if (!definition || definition->name.empty()) return;
+        // A source for a combined value nobody declared: declare it implicitly
+        for (const auto& target : definition->provides) {
+            if (!NamedValueDef::IsValidName(target) || FindNamedValue(target)) continue;
+            auto combined = std::make_shared<NamedValueDef>();
+            combined->name = target;
+            combined->key = Lower(target);
+            combined->source = "implicit";
+            combined->definition = {{"combined", true}};
+            combined->global = true;  // per actor as soon as a per-actor source exists (NamedValueRef::ReadsActor)
+            RegisterNamedValue(std::move(combined));
+        }
         std::unique_lock lock(mutex_);
         auto& entry = namedValues_[Lower(definition->name)];
         if (entry && entry->source != definition->source) {
@@ -580,9 +591,27 @@ namespace ConditionEngine {
 
     void Registry::RebuildRefreshIndex() {
         refreshIndex_.clear();
+        providerIndex_.clear();
         for (const auto& [key, def] : namedValues_) {
             for (const auto& event : def->refreshOn) refreshIndex_[Lower(event)].push_back(key);
+            for (const auto& target : def->provides) providerIndex_[Lower(target)].push_back(key);
         }
+    }
+
+    std::vector<std::shared_ptr<const NamedValueDef>> Registry::ProvidersOf(const std::string& name) const {
+        std::vector<std::shared_ptr<const NamedValueDef>> result;
+        {
+            std::shared_lock lock(mutex_);
+            auto it = providerIndex_.find(Lower(name));
+            if (it == providerIndex_.end()) return result;
+            for (const auto& key : it->second) {
+                if (auto def = namedValues_.find(key); def != namedValues_.end()) result.push_back(def->second);
+            }
+        }
+        std::sort(result.begin(), result.end(), [](const auto& a, const auto& b) {
+            return a->priority != b->priority ? a->priority > b->priority : a->key < b->key;
+        });
+        return result;
     }
 
     std::vector<std::shared_ptr<const NamedValueDef>> Registry::ValuesRefreshedBy(std::string_view eventName) const {

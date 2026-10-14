@@ -196,7 +196,7 @@ namespace ConditionEngine {
                 sample.reason = std::move(reason);
             }
         }
-        Watcher::Get().PostEvent(EventDependency::Value, actorId);
+        Watcher::Get().PostValueChange("call:" + callKey, slot == 0 ? Watcher::kAllActors : actorId);
     }
 
     // ── Condition ────────────────────────────────────────────────────────────
