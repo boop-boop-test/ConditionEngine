@@ -59,6 +59,10 @@ namespace ConditionEngine {
         // Set when the type can be read as a number (Condition::ReadValue). Its unit and range.
         std::optional<ValueInfo> value;
         std::uint32_t statsSlot = 0;         // Stats row, assigned at registration
+        // Evaluation cost class: 0 constant, 1 snapshot read (time, weather, location, actor
+        // state), 2 engine read (actor value, faction, keyword, item count, global), 3 vanilla
+        // condition function, 4 script property, 5 Papyrus call. And / Or evaluate cheapest first.
+        int cost = 3;
         bool hidden = false;                 // Legacy/internal: accepted but not offered in pickers (= Offer::Nowhere)
         std::string source;                  // Who registered it ("ConditionEngine", plugin name) - also its owner
         Offer offer = Offer::Everywhere;
@@ -152,6 +156,8 @@ namespace ConditionEngine {
         // Returns false if the name or an alias is already registered.
         bool RegisterType(TypeInfo info);
         const TypeInfo* FindType(const std::string& nameOrAlias) const;
+        // Sets a registered type's cost class (see TypeInfo::cost). False when unknown.
+        bool SetTypeCost(const std::string& nameOrAlias, int cost);
         std::vector<const TypeInfo*> GetTypes() const;
         std::unique_ptr<Condition> Create(const nlohmann::json& json) const;
 
@@ -281,6 +287,7 @@ namespace ConditionEngine {
         TypeBuilder& Value(ValueInfo v) { info_.value = std::move(v); return *this; }
         TypeBuilder& Hidden(bool v = true) { info_.hidden = v; return *this; }
         TypeBuilder& Offer(ConditionEngine::Offer v) { info_.offer = v; return *this; }
+        TypeBuilder& Cost(int v) { info_.cost = v; return *this; }
         TypeBuilder& Tags(std::vector<std::string> v) { info_.tags = std::move(v); return *this; }
         TypeBuilder& Source(std::string v) { info_.source = std::move(v); return *this; }
         TypeBuilder& Factory(ConditionFactory v) { info_.factory = std::move(v); return *this; }

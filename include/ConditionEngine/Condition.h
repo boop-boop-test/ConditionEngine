@@ -5,6 +5,7 @@
 #include <atomic>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -151,6 +152,14 @@ namespace ConditionEngine {
         // over Unavailable, and Not keeps both. Used where "cannot tell" must not read as
         // "false": a named value's enabledWhen, a condition read as a value.
         virtual TriResult EvaluateTri(const EvaluationContext& context) const { return TriResult::Of(Evaluate(context)); }
+
+        // Compile-time knowledge (issue 088 steps 4-5).
+        // The result when it cannot depend on game state (constants, folded groups), else nullopt.
+        virtual std::optional<bool> ConstantResult() const { return std::nullopt; }
+        // Rough evaluation cost: the type's cost class (TypeInfo::cost: 0 constant, 1 snapshot
+        // read, 2 engine read, 3 vanilla condition function, 4 script property, 5 Papyrus
+        // call); composites add their parts. And / Or evaluate cheapest first.
+        virtual int Cost() const;
 
         // Numeric types (TypeInfo::value set) return the number they compare, ignoring
         // their own comparison fields. Everything else reports an Error.

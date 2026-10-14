@@ -17,6 +17,7 @@ namespace ConditionEngine {
 
         bool Evaluate(const EvaluationContext& context) const override;
         TriResult EvaluateTri(const EvaluationContext& context) const override;
+        int Cost() const override;
         std::string GetDescription() const override;
         nlohmann::json ToJson() const override;
         std::unique_ptr<Condition> Clone() const override;

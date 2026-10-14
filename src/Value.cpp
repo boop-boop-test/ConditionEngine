@@ -206,6 +206,39 @@ namespace ConditionEngine {
 
     MathValue::MathValue(Op op, std::vector<std::shared_ptr<const Value>> args) : op_(op), args_(std::move(args)) {
         statsSlot = Stats::kMath;
+        // Constant folding: literal-only arithmetic is computed once
+        std::vector<double> values;
+        for (const auto& arg : args_) {
+            auto c = arg ? arg->ConstantValue() : std::nullopt;
+            if (!c) return;
+            values.push_back(*c);
+        }
+        if (values.empty() || (Arity(op_) ? values.size() != *Arity(op_) : values.size() < 2)) return;
+        const double out = Apply(values.data(), values.size());
+        if (std::isfinite(out)) folded_ = out;
+    }
+
+    int MathValue::Cost() const {
+        if (folded_) return 0;
+        int cost = 0;
+        for (const auto& arg : args_) cost += arg ? arg->Cost() : 0;
+        return cost;
+    }
+
+    double MathValue::Apply(const double* v, std::size_t count) const {
+        switch (op_) {
+            case Op::Add: return v[0] + v[1];
+            case Op::Sub: return v[0] - v[1];
+            case Op::Mul: return v[0] * v[1];
+            case Op::Div: return v[1] == 0.0 ? 0.0 : v[0] / v[1];  // x / 0 reads 0
+            case Op::Neg: return -v[0];
+            case Op::Abs: return std::abs(v[0]);
+            case Op::Min: return *std::min_element(v, v + count);
+            case Op::Max: return *std::max_element(v, v + count);
+            case Op::Clamp: return std::min(std::max(v[0], v[1]), v[2]);
+            case Op::Lerp: return v[0] + (v[1] - v[0]) * v[2];
+        }
+        return 0.0;
     }
 
     std::optional<MathValue::Op> MathValue::ParseOp(std::string_view name) {
@@ -235,6 +268,7 @@ namespace ConditionEngine {
     }
 
     ValueResult MathValue::Read(const EvaluationContext& context) const {
+        if (folded_) return ValueResult::Of(*folded_);
         ValueResult result;
         // Arguments in a fixed buffer: only min / max with more than 8 arguments allocate
         std::array<double, 8> fixed{};
@@ -253,19 +287,7 @@ namespace ConditionEngine {
         if (args_.empty()) return ValueResult::Fail(ValueStatus::Error, "no arguments");
         double* end = v + args_.size();
 
-        double out = 0.0;
-        switch (op_) {
-            case Op::Add: out = v[0] + v[1]; break;
-            case Op::Sub: out = v[0] - v[1]; break;
-            case Op::Mul: out = v[0] * v[1]; break;
-            case Op::Div: out = v[1] == 0.0 ? 0.0 : v[0] / v[1]; break;  // x / 0 reads 0
-            case Op::Neg: out = -v[0]; break;
-            case Op::Abs: out = std::abs(v[0]); break;
-            case Op::Min: out = *std::min_element(v, end); break;
-            case Op::Max: out = *std::max_element(v, end); break;
-            case Op::Clamp: out = std::min(std::max(v[0], v[1]), v[2]); break;
-            case Op::Lerp: out = v[0] + (v[1] - v[0]) * v[2]; break;
-        }
+        double out = Apply(v, args_.size());
         if (!std::isfinite(out)) {
             MergeValueStatus(result, ValueResult::Fail(ValueStatus::Error, "result is not a finite number"));
             out = 0.0;
@@ -310,18 +332,21 @@ namespace ConditionEngine {
         statsSlot = Stats::kNamedValue;
     }
 
-    std::shared_ptr<const NamedValueDef> NamedValueRef::Bind() const {
+    std::shared_ptr<const NamedValueRef::Binding> NamedValueRef::Bind() const {
         const auto revision = Availability::Get().Revision();
         std::lock_guard lock(bindMutex_);
         if (boundRevision_ != revision) {
-            bound_ = Registry::Get().FindNamedValue(key_);
+            auto& registry = Registry::Get();
+            bound_ = std::make_shared<const Binding>(Binding{registry.FindNamedValue(key_), registry.ProvidersOf(key_)});
             boundRevision_ = revision;
         }
         return bound_;
     }
 
     namespace {
-        ValueResult ReadDefinition(const NamedValueDef& def, const EvaluationContext& context);
+        // `providers` null = look them up (sources read through a combined value)
+        ValueResult ReadDefinition(const NamedValueDef& def, const std::vector<std::shared_ptr<const NamedValueDef>>* providers,
+                                   const EvaluationContext& context);
 
         // A combined value's sources, highest priority first, then its own expression:
         // the first available one answers; a pending one holds the result pending
@@ -333,9 +358,9 @@ namespace ConditionEngine {
                 tried += name + ": " + (r.reason.empty() ? ValueStatusName(r.status) : r.reason);
             };
             for (const auto& source : providers) {
-                auto r = ReadDefinition(*source, context);
+                auto r = ReadDefinition(*source, nullptr, context);
                 if (r.Ok()) {
-                    r.from = source->name;
+                    r.from = &source->name;
                     return r;
                 }
                 if (r.status == ValueStatus::Pending) {
@@ -347,7 +372,8 @@ namespace ConditionEngine {
             if (def.value) {
                 auto r = def.value->ReadCounted(context);
                 if (r.Ok()) {
-                    r.from = def.name + " (own expression)";
+                    r.from = &def.name;
+                    r.fromOwnExpression = true;
                     return r;
                 }
                 if (r.status == ValueStatus::Pending) return r;
@@ -357,7 +383,8 @@ namespace ConditionEngine {
                                      tried.empty() ? "no source provides " + def.name : "no source available (" + tried + ")");
         }
 
-        ValueResult ReadDefinition(const NamedValueDef& def, const EvaluationContext& context) {
+        ValueResult ReadDefinition(const NamedValueDef& def, const std::vector<std::shared_ptr<const NamedValueDef>>* providers,
+                                   const EvaluationContext& context) {
             auto& inProgress = context.valuesInProgress;
             if (std::find(inProgress.begin(), inProgress.end(), &def) != inProgress.end()) {
                 return ValueResult::Fail(ValueStatus::Error, "circular named value: " + def.name);
@@ -383,8 +410,10 @@ namespace ConditionEngine {
                 result = ValueResult::Fail(ValueStatus::Unavailable, def.name + " is not enabled for this actor");
             } else if (auto pushed = PushedValues::Get().Read(def, context.GetActor())) {
                 result = std::move(*pushed);
-            } else if (auto providers = Registry::Get().ProvidersOf(key); !providers.empty()) {
-                result = ReadProviders(def, providers, context);
+            } else if (auto looked = providers ? std::vector<std::shared_ptr<const NamedValueDef>>{}
+                                                 : Registry::Get().ProvidersOf(key);
+                       !(providers ? *providers : looked).empty()) {
+                result = ReadProviders(def, providers ? *providers : looked, context);
             } else if (def.value) {
                 result = def.value->ReadCounted(context);
             } else if (def.pushed) {
@@ -411,14 +440,14 @@ namespace ConditionEngine {
     }
 
     ValueResult NamedValueRef::Read(const EvaluationContext& context) const {
-        auto def = Bind();
-        if (!def) return ValueResult::Fail(ValueStatus::Unavailable, "no value named " + name_);
-        return ReadDefinition(*def, context);
+        const auto binding = Bind();
+        if (!binding->def) return ValueResult::Fail(ValueStatus::Unavailable, "no value named " + name_);
+        return ReadDefinition(*binding->def, &binding->providers, context);
     }
 
     EventDependency NamedValueRef::GetEventDependencies() const {
         EventDependency deps = EventDependency::Value;  // pushes and redefinitions
-        auto def = Bind();
+        auto def = Bind()->def;
         if (!def) return deps;
         ResolvingGuard guard(Lower(def->name));
         if (!guard.entered) return deps;
@@ -430,8 +459,24 @@ namespace ConditionEngine {
         return deps;
     }
 
+    int NamedValueRef::Cost() const {
+        // A bound definition's own cost plus one for the lookup; cycles end at a depth cap
+        thread_local int depth = 0;
+        if (depth > 16) return 3;
+        auto def = Bind()->def;
+        if (!def) return 1;
+        ++depth;
+        int cost = 1;
+        if (def->value) cost += def->value->Cost();
+        if (def->enabledWhen) cost += def->enabledWhen->Cost();
+        auto providers = Registry::Get().ProvidersOf(def->name);
+        if (!providers.empty()) cost += NamedValueRef(providers.front()->name).Cost();  // usually the first answers
+        --depth;
+        return cost;
+    }
+
     bool NamedValueRef::ReadsActor() const {
-        auto def = Bind();
+        auto def = Bind()->def;
         if (!def) return true;
         if (!def->global) return true;
         // A combined value is per actor when any source is

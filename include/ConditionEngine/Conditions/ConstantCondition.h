@@ -16,6 +16,8 @@ namespace ConditionEngine {
         nlohmann::json ToJson() const override { return {{"type", "Constant"}, {"value", value_}}; }
         std::unique_ptr<Condition> Clone() const override { return std::make_unique<ConstantCondition>(value_); }
         EventDependency GetEventDependencies() const override { return EventDependency::None; }
+        std::optional<bool> ConstantResult() const override { return value_; }
+        int Cost() const override { return 0; }
 
         bool GetValue() const { return value_; }
 

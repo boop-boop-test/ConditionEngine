@@ -12,6 +12,8 @@ namespace ConditionEngine {
 
     Condition::~Condition() { delete availabilityMemo_.load(); }
 
+    int Condition::Cost() const { return typeInfo ? typeInfo->cost : 3; }
+
     bool Condition::EvaluateAvailable(const EvaluationContext& context) const {
         return CheckAvailability().Ready() && EvaluateCounted(context);
     }

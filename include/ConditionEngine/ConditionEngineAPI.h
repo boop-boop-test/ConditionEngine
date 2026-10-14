@@ -145,7 +145,9 @@ CONDITIONENGINE_API CE_Result ConditionEngine_AddNamedResolver(CE_NamedLookupFn 
 ///    "description": "...", "source": "MyMod", "aliases": [], "compareField": "level",
 ///    "fields": [{"key": "level", "label": "Curse Level", "type": "int", "default": 1}],
 ///    "positional": ["level"], "requiresPlugins": ["MyMod.esp"], "offer": "everywhere",
-///    "tags": []}
+///    "tags": [], "cost": 3}
+/// "cost" is the evaluation cost class (0 constant .. 5 Papyrus call, default 3): And / Or
+/// evaluate cheaper parts first.
 /// Field types: int, float, string, bool, enum, enumList, form, formList, stringList,
 /// intList, comparison, namedCondition, custom, value (see ConditionEngine/Schema.h).
 /// A missing "source" uses the calling module's file name (and logs a warning).

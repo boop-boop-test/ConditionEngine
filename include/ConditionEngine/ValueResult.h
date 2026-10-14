@@ -29,14 +29,18 @@ namespace ConditionEngine {
         double value = 0.0;
         ValueStatus status = ValueStatus::Ok;
         std::string reason;                       // set when status != Ok
-        std::string from;                         // combined values: the provider that answered
+        // Combined values: the provider that answered (its definition's name; definitions
+        // outlive the read). Use FromText().
+        const std::string* from = nullptr;
+        bool fromOwnExpression = false;
         std::optional<Clock::time_point> sampledAt;  // nullopt = read live just now
 
         bool Ok() const { return status == ValueStatus::Ok; }
+        std::string FromText() const { return from ? *from + (fromOwnExpression ? " (own expression)" : "") : std::string{}; }
 
         static ValueResult Of(double v) { return ValueResult{v}; }
         static ValueResult Fail(ValueStatus status, std::string reason, double fallback = 0.0) {
-            return ValueResult{fallback, status, std::move(reason), {}, std::nullopt};
+            return ValueResult{fallback, status, std::move(reason), nullptr, false, std::nullopt};
         }
     };
 

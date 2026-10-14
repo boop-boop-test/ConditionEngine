@@ -30,6 +30,17 @@ namespace ConditionEngine {
         return named;
     }
 
+    int RuleReferenceCondition::Cost() const {
+        // Named conditions can nest; a depth cap keeps cycles finite
+        thread_local int depth = 0;
+        if (depth > 16) return 3;
+        ++depth;
+        auto named = Resolve();
+        const int cost = named ? named->Cost() : 3;  // host rules (DressCode): an ordinary read
+        --depth;
+        return cost;
+    }
+
     bool RuleReferenceCondition::Evaluate(const EvaluationContext& context) const {
         const std::string& key = GetKey();
 

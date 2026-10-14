@@ -167,6 +167,7 @@ namespace {
             builder.Offer(*offer);
         }
         if (schema.contains("hidden") && schema["hidden"].is_boolean()) builder.Hidden(schema["hidden"].get<bool>());
+        if (schema.contains("cost") && schema["cost"].is_number_integer()) builder.Cost(schema["cost"].get<int>());
         builder.Tags(ReadStringList(schema, "tags"));
         if (schema.contains("aliases") && schema["aliases"].is_array()) {
             builder.Aliases(schema["aliases"].get<std::vector<std::string>>());
@@ -663,7 +664,7 @@ CONDITIONENGINE_API CE_Result ConditionEngine_EvaluateValue(CE_ValueHandle handl
     sample.sampledAt = result.sampledAt.value_or(ValueSample::Clock::now());
     sample.availabilityRevision = Availability::Get().Revision();
     WriteSample(sample, out);
-    WriteString(result.Ok() ? (result.from.empty() ? std::string{} : "from " + result.from) : result.reason, reasonBuf,
+    WriteString(result.Ok() ? (result.from ? "from " + result.FromText() : std::string{}) : result.reason, reasonBuf,
                 reasonBufSize);
     return CE_OK;
 }

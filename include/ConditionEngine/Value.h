@@ -62,6 +62,11 @@ namespace ConditionEngine {
         // Configuration errors (missing fields, unknown types), empty when valid
         virtual std::vector<std::string> Validate() const { return {}; }
 
+        // The value when it cannot depend on game state (literals, folded math), else nullopt
+        virtual std::optional<double> ConstantValue() const { return std::nullopt; }
+        // Rough read cost, as Condition::Cost
+        virtual int Cost() const { return 2; }
+
         // False when the value is the same for every actor (literals, time, weather,
         // globals, quest stages); decides a named value's inferred scope.
         virtual bool ReadsActor() const;

@@ -743,7 +743,7 @@ namespace ConditionEngine {
             if (!keepValue || !sample.sampledAt) sample.value = result.value;
             sample.status = result.status;
             sample.reason = std::move(result.reason);
-            sample.from = std::move(result.from);
+            sample.from = result.FromText();
             sample.sampledAt = result.sampledAt.value_or(now);
             sample.availabilityRevision = revision;
         }

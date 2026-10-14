@@ -47,6 +47,8 @@ ConditionEngine_Watch(h, actor, [](CE_WatchHandle, void* a, int32_t result, void
 }, nullptr, &options);
 ```
 
+**Evaluation order**: every type has a cost class (0 constant, 1 snapshot read, 2 engine read, 3 `Game(...)`, 4 script property, 5 `PapyrusCall`; C API types declare `"cost"`, default 3). And / Or groups evaluate their children cheapest first, skip duplicates, and fold constants (`false && x` is false without reading `x`); the written order is kept for saving and display. Literal math is computed once.
+
 **List watches** (`ConditionEngine_WatchList`): an ordered list of conditions for one actor; the winner is the first true one (`ReadListWatch` from any thread, a callback when it changes). Only what can move the result is evaluated after a change: touched rules above the winner, then the winner, and the rules below it only when it turns false. A pending rule above the winner holds it. Value changes are keyed, so pushing `$hunger` for Serana wakes only Serana's watches that read hunger.
 
 The API is version 1 (`ConditionEngine_GetAPIVersion`) and prerelease: it may still change until the first release. `CE_WatchOptions` takes a poll interval (`CE_POLL_DEFAULT`, `CE_POLL_NEVER` or a number of milliseconds) and extra triggers, such as `CE_DEP_LOCATION` to re-check on every cell transition. `ConditionEngine_Refresh(watch)` forces a check.

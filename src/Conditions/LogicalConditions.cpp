@@ -2,39 +2,83 @@
 #include "ConditionEngine/Condition.h"
 #include "ConditionEngine/EvaluationContext.h"
 
+#include <unordered_set>
+
 namespace ConditionEngine {
 
-    LogicalCondition::LogicalCondition(LogicalOperator op) : operation(op) {}
+    LogicalCondition::LogicalCondition(LogicalOperator op) : operation(op) { Plan(); }
 
     LogicalCondition::LogicalCondition(LogicalOperator op, std::vector<std::unique_ptr<Condition>> children)
-        : operation(op), children(std::move(children)) {}
+        : operation(op), children(std::move(children)) {
+        Plan();
+    }
+
+    void LogicalCondition::Plan() {
+        order_.clear();
+        constant_.reset();
+        cost_ = 0;
+        InvalidateAvailability();
+
+        if (operation == LogicalOperator::Not) {
+            if (children.empty() || !children[0]) {
+                constant_ = true;  // Not of nothing: true, as before
+                return;
+            }
+            if (auto c = children[0]->ConstantResult()) constant_ = !*c;
+            order_.push_back(0);
+            cost_ = children[0]->Cost();
+            return;
+        }
+
+        const bool decisive = operation == LogicalOperator::Or;  // And: false decides, Or: true decides
+        std::unordered_set<std::string> seen;
+        for (std::size_t i = 0; i < children.size(); ++i) {
+            if (!children[i]) continue;
+            if (auto c = children[i]->ConstantResult()) {
+                if (*c == decisive) {
+                    constant_ = decisive;
+                    order_.clear();
+                    cost_ = 0;
+                    return;
+                }
+                continue;  // neutral: true in And, false in Or
+            }
+            if (!seen.insert(children[i]->ToJsonComplete().dump()).second) continue;  // duplicate
+            order_.push_back(i);
+        }
+        if (order_.empty()) {
+            constant_ = !decisive;  // And of only true, Or of only false
+            return;
+        }
+        std::stable_sort(order_.begin(), order_.end(),
+                         [this](std::size_t a, std::size_t b) { return children[a]->Cost() < children[b]->Cost(); });
+        for (auto i : order_) cost_ += children[i]->Cost();
+    }
 
     bool LogicalCondition::Evaluate(const EvaluationContext& context) const {
+        if (constant_) return *constant_;
         switch (operation) {
             case LogicalOperator::And:
-                for (const auto& child : children) {
-                    if (!child->EvaluateCounted(context)) return false;
+                for (auto i : order_) {
+                    if (!children[i]->EvaluateCounted(context)) return false;
                 }
                 return true;
-                
+
             case LogicalOperator::Or:
-                for (const auto& child : children) {
-                    if (child->EvaluateCounted(context)) return true;
+                for (auto i : order_) {
+                    if (children[i]->EvaluateCounted(context)) return true;
                 }
                 return false;
-                
+
             case LogicalOperator::Not:
-                if (children.size() > 0) {
-                    return !children[0]->EvaluateCounted(context);
-                }
-                return true;
+                return !children[0]->EvaluateCounted(context);
         }
         return false;
     }
 
     TriResult LogicalCondition::EvaluateTri(const EvaluationContext& context) const {
+        if (constant_) return TriResult::Of(*constant_);
         if (operation == LogicalOperator::Not) {
-            if (children.empty()) return TriResult::Of(true);
             auto r = children[0]->EvaluateTriCounted(context);
             if (!r.Decided()) return r;
             return TriResult::Of(r.state == TriState::False);
@@ -43,8 +87,8 @@ namespace ConditionEngine {
         // it undecided, Pending before Unavailable
         const TriState decisive = operation == LogicalOperator::And ? TriState::False : TriState::True;
         std::optional<TriResult> pending, unavailable;
-        for (const auto& child : children) {
-            auto r = child->EvaluateTriCounted(context);
+        for (auto i : order_) {
+            auto r = children[i]->EvaluateTriCounted(context);
             if (r.state == decisive) return r;
             if (r.state == TriState::Pending && !pending) pending = std::move(r);
             else if (r.state == TriState::Unavailable && !unavailable) unavailable = std::move(r);
@@ -111,13 +155,13 @@ namespace ConditionEngine {
 
     void LogicalCondition::AddChild(std::unique_ptr<Condition> condition) {
         children.push_back(std::move(condition));
-        InvalidateAvailability();
+        Plan();
     }
 
     void LogicalCondition::RemoveChild(std::size_t index) {
         if (index < children.size()) {
             children.erase(children.begin() + index);
-            InvalidateAvailability();
+            Plan();
         }
     }
 

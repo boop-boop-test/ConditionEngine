@@ -85,6 +85,14 @@ namespace ConditionEngine {
         return it != typeLookup_.end() ? it->second : nullptr;
     }
 
+    bool Registry::SetTypeCost(const std::string& nameOrAlias, int cost) {
+        std::unique_lock lock(mutex_);
+        auto it = typeLookup_.find(Lower(nameOrAlias));
+        if (it == typeLookup_.end()) return false;
+        const_cast<TypeInfo*>(it->second)->cost = std::clamp(cost, 0, 9);
+        return true;
+    }
+
     std::vector<const TypeInfo*> Registry::GetTypes() const {
         std::shared_lock lock(mutex_);
         std::vector<const TypeInfo*> result;
@@ -372,6 +380,7 @@ namespace ConditionEngine {
                 if (!info->compareField.empty()) type["compareField"] = info->compareField;
                 if (offer == Offer::Nowhere) type["hidden"] = true;  // pre-v6 readers
                 if (info->value) type["value"] = info->value->ToJson();
+                type["cost"] = info->cost;
                 stamp(type, info->source, category, info->category, offer, std::move(tags));
                 types.push_back(std::move(type));
             }
@@ -602,6 +611,7 @@ namespace ConditionEngine {
         std::vector<std::shared_ptr<const NamedValueDef>> result;
         {
             std::shared_lock lock(mutex_);
+            if (providerIndex_.empty()) return result;
             auto it = providerIndex_.find(Lower(name));
             if (it == providerIndex_.end()) return result;
             for (const auto& key : it->second) {

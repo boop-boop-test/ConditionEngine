@@ -552,6 +552,25 @@ namespace ConditionEngine {
         RegisterActorConditionTypes(r);
         RegisterGearConditionTypes(r);
         RegisterWorldConditionTypes(r);
+
+        // Cost classes (TypeInfo::cost); unlisted types keep 3. Composites (Logical, Rule,
+        // Compare) compute theirs from their parts.
+        const std::pair<int, std::initializer_list<const char*>> costs[] = {
+            {0, {"Constant"}},
+            {1, {"Time", "DayOfWeek", "Month", "DayOfMonth", "Holiday", "Weather", "InteriorExterior", "LocationType",
+                 "LocationKeyword", "Location", "Swimming", "Sleeping", "Mounting", "InWater", "Combat", "IsPlayer",
+                 "IsActor", "Sex", "IsPluginLoaded"}},
+            {2, {"Temperature", "LoveScene", "Faction", "ActorValue", "Race", "HasSlotsEquipped", "QuestStage",
+                 "QuestCategory", "GlobalVariable", "Random", "Sneaking", "Sitting", "InDialogue", "Bleedout", "WeaponDrawn",
+                 "IsFollower", "HasKeyword", "HasMagicEffect", "HasPerk", "HasSpell", "WornHasKeyword", "Level", "ItemCount",
+                 "HasItem", "EquippedWeaponType", "Worldspace", "Hold", "InLocation", "InCell"}},
+            {3, {"Game"}},
+            {4, {"ScriptValue"}},
+            {5, {"PapyrusCall"}},
+        };
+        for (const auto& [cost, names] : costs) {
+            for (const char* name : names) r.SetTypeCost(name, cost);
+        }
     }
 
 } // namespace ConditionEngine

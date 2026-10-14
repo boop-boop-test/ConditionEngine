@@ -24,6 +24,13 @@ namespace ConditionEngine {
         return TriResult::Of(CompareValues(lhs.value, op_, rhs.value));
     }
 
+    std::optional<bool> CompareCondition::ConstantResult() const {
+        auto lhs = left_ ? left_->ConstantValue() : std::nullopt;
+        auto rhs = right_ ? right_->ConstantValue() : std::nullopt;
+        if (!lhs || !rhs) return std::nullopt;
+        return CompareValues(*lhs, op_, *rhs);
+    }
+
     bool CompareValues(double lhs, ComparisonOperator op, double rhs) {
         switch (op) {
             case ComparisonOperator::Equal: return lhs == rhs;

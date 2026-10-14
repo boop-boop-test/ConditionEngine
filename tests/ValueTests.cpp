@@ -529,13 +529,13 @@ void RunValueTests(CheckFn check) {
               "nothing available lists the sources tried: " + r.reason);
         pushed.Set(nullptr, "prov_low", 10);
         r = Read("$pv_hunger");
-        Check(r.Ok() && r.value == 10 && r.from == "prov_low", "the only available source answers");
+        Check(r.Ok() && r.value == 10 && r.FromText() == "prov_low", "the only available source answers");
         pushed.Set(nullptr, "prov_high", 70);
         r = Read("$pv_hunger");
-        Check(r.Ok() && r.value == 70 && r.from == "prov_high", "the higher priority source wins");
+        Check(r.Ok() && r.value == 70 && r.FromText() == "prov_high", "the higher priority source wins");
         pushed.Clear(nullptr, "prov_high");
         r = Read("$pv_hunger");
-        Check(r.Ok() && r.value == 10 && r.from == "prov_low", "falls back to the next source");
+        Check(r.Ok() && r.value == 10 && r.FromText() == "prov_low", "falls back to the next source");
 
         Define("prov_pending", json{{"expr", "TestPendingValue"}, {"provides", "pv_hunger"}, {"priority", 100}});
         r = Read("$pv_hunger");
@@ -545,12 +545,12 @@ void RunValueTests(CheckFn check) {
 
         Define("prov_tie_b", json{{"expr", "2"}, {"provides", "pv_tie"}, {"priority", 5}});
         Define("prov_tie_a", json{{"expr", "1"}, {"provides", "pv_tie"}, {"priority", 5}});
-        Check(Read("$pv_tie").from == "prov_tie_a", "ties are broken by name");
+        Check(Read("$pv_tie").FromText() == "prov_tie_a", "ties are broken by name");
 
         Define("pv_cold", json{{"expr", "5"}, {"label", "Cold"}});
         Define("cold_src", json{{"pushed", true}, {"provides", "pv_cold"}});
         r = Read("$pv_cold");
-        Check(r.Ok() && r.value == 5 && r.from.find("own expression") != std::string::npos,
+        Check(r.Ok() && r.value == 5 && r.FromText().find("own expression") != std::string::npos,
               "a declared combined value's own expr is the last source");
         pushed.Set(nullptr, "cold_src", 9);
         Check(Read("$pv_cold").value == 9, "a provider beats the own expression");
@@ -645,6 +645,52 @@ void RunValueTests(CheckFn check) {
         const auto keys = CollectValueKeys(Expression::CompileAny("$pv_hunger > 1", &error)->ToJsonComplete());
         Check(keys.contains("$pv_hunger") && keys.contains("$prov_high") && keys.contains("$prov_low"),
               "value keys follow combined values to their sources");
+    }
+
+    // ── Constant folding and cheapest-first order (issue 088 steps 4-5) ──────
+    {
+        static int cheapCalls = 0, expensiveCalls = 0;
+        TypeBuilder("TestCheapFalse", "Cheap false", "other")
+            .Cost(1)
+            .Factory([](const json& j) {
+                return std::make_unique<CallbackCondition>(
+                    "cheap", [](const EvaluationContext&) { ++cheapCalls; return false; }, EventDependency::Time, j);
+            })
+            .Register(registry);
+        TypeBuilder("TestExpensiveTrue", "Expensive true", "other")
+            .Cost(5)
+            .Factory([](const json& j) {
+                return std::make_unique<CallbackCondition>(
+                    "expensive", [](const EvaluationContext&) { ++expensiveCalls; return true; }, EventDependency::Polled, j);
+            })
+            .Register(registry);
+        std::string error;
+        EvaluationContext context(nullptr);
+
+        auto ordered = Expression::CompileAny("TestExpensiveTrue && TestCheapFalse", &error);
+        Check(ordered && !ordered->Evaluate(context) && cheapCalls == 1 && expensiveCalls == 0,
+              "the cheap false term short-circuits the expensive one written before it");
+        Check(Expression::ToExpression(*ordered) == "TestExpensiveTrue && TestCheapFalse", "the written order is kept");
+        Check(ordered->Cost() == 6, "a group costs its parts");
+
+        cheapCalls = 0;
+        auto duplicated = Expression::CompileAny("TestCheapFalse || TestCheapFalse || TestCheapFalse", &error);
+        Check(duplicated && !duplicated->Evaluate(context) && cheapCalls == 1, "duplicate children are evaluated once");
+
+        auto decided = Expression::CompileAny("false && TestExpensiveTrue", &error);
+        Check(decided && decided->ConstantResult() == false, "false && x folds to false");
+        expensiveCalls = 0;
+        Check(!decided->Evaluate(context) && expensiveCalls == 0, "a folded group reads nothing");
+        Check(Expression::CompileAny("true || TestCheapFalse", &error)->ConstantResult() == true, "true || x folds to true");
+        Check(!Expression::CompileAny("true && TestCheapFalse", &error)->ConstantResult(), "neutral constants do not fold");
+        Check(Expression::CompileAny("!(true && true)", &error)->ConstantResult() == false, "not of a constant folds");
+        Check(Expression::CompileAny("1 < 2", &error)->ConstantResult() == true, "literal comparisons fold");
+        Check(Expression::CompileValueAny("2 + 3 * 4", &error)->ConstantValue() == 14.0, "literal math folds");
+        Check(!Expression::CompileValueAny("$doubled + 1", &error)->ConstantValue(), "named values never fold");
+
+        // Built-in cost classes
+        Check(Expression::CompileAny("Time(20, 6)", &error)->Cost() == 1, "Time is a snapshot read");
+        Check(Expression::CompileAny("PapyrusCall(A, B)", &error)->Cost() == 5, "PapyrusCall is the most expensive");
     }
 
     // ── refreshOn (issue 089) ────────────────────────────────────────────────
