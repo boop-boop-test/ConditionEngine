@@ -22,6 +22,8 @@ namespace ConditionEngine {
 
     private:
         RE::ActorValue actorValue;
+        mutable RE::ActorValue resolved_ = RE::ActorValue::kNone;  // actorValueName, looked up once
+        mutable std::uint64_t resolveRevision_ = ~0ull;           // retried when the revision moves
         std::string actorValueName;
         float targetValue;
         ComparisonOperator operation;

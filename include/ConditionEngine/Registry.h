@@ -58,6 +58,7 @@ namespace ConditionEngine {
         std::vector<std::string> requiresPlugins; // All must be loaded; types remain registered when unavailable.
         // Set when the type can be read as a number (Condition::ReadValue). Its unit and range.
         std::optional<ValueInfo> value;
+        std::uint32_t statsSlot = 0;         // Stats row, assigned at registration
         bool hidden = false;                 // Legacy/internal: accepted but not offered in pickers (= Offer::Nowhere)
         std::string source;                  // Who registered it ("ConditionEngine", plugin name) - also its owner
         Offer offer = Offer::Everywhere;
@@ -69,6 +70,7 @@ namespace ConditionEngine {
         enum class Scope { Auto, Actor, Global };
 
         std::string name;                              // as written; lookups ignore case
+        std::string key;                               // lowercase name
         std::shared_ptr<const Value> value;            // null for a pushed-only value
         std::shared_ptr<const Condition> enabledWhen;  // false for an actor = Unavailable for that actor
         std::optional<double> fallback;                // read while pending / unavailable
@@ -83,6 +85,7 @@ namespace ConditionEngine {
         double graceSeconds = 0.0;                     // keep the last good value this long after a failed read
         std::vector<std::string> requiresPlugins;
         std::vector<std::string> requiresDlls;         // must be loaded in the game process ("SomeNative.dll")
+        std::vector<std::string> refreshOn;            // SKSE mod events that re-sample it (RefreshOn.h)
         std::string source;                            // preset file, owner plugin, "papyrus", "implicit"
         std::string owner;                             // for Offer::Owner; defaults to source
         std::string expression;                        // value text when given as an expression
@@ -100,7 +103,7 @@ namespace ConditionEngine {
         // Parses a definition: expression text ("$a * 2"), a value JSON node, or an object
         // {"expr" | "value", "label", "unit", "range", "integer", "enabledWhen", "fallback",
         //  "scope", "pushed": {"default", "timeoutSeconds"}, "graceSeconds", "requiresPlugins",
-        //  "requiresDlls", "category", "icon", "description", "offer", "tags", "owner"}.
+        //  "requiresDlls", "refreshOn", "category", "icon", "description", "offer", "tags", "owner"}.
         // Returns null and fills `error` when it is invalid.
         static std::shared_ptr<NamedValueDef> Parse(const std::string& name, const nlohmann::json& definition,
                                                     const std::string& source, std::string* error);
@@ -201,6 +204,9 @@ namespace ConditionEngine {
 
         // Looks up engine-owned entries first, then host resolvers.
         std::shared_ptr<const Condition> FindNamed(const std::string& key) const;
+        // True when the engine owns this named condition (presets, C API, Papyrus): its
+        // changes move the availability revision, unlike host-resolved ones
+        bool IsEngineNamed(const std::string& key) const;
 
         void AddNamedResolver(NamedResolver resolver);
 
@@ -210,6 +216,8 @@ namespace ConditionEngine {
         bool UnregisterNamedValue(const std::string& name);
         std::shared_ptr<const NamedValueDef> FindNamedValue(const std::string& name) const;
         std::vector<std::shared_ptr<const NamedValueDef>> ListNamedValues() const;
+        // Named values whose refreshOn lists this mod event (case-insensitive)
+        std::vector<std::shared_ptr<const NamedValueDef>> ValuesRefreshedBy(std::string_view eventName) const;
 
         // ── Providers ────────────────────────────────────────────────────────
         void SetLoveSceneProvider(ActorFlagProvider provider);
@@ -230,6 +238,8 @@ namespace ConditionEngine {
         std::unordered_map<std::string, const TypeInfo*> typeLookup_;
         std::unordered_map<std::string, NamedEntry> named_;
         std::unordered_map<std::string, std::shared_ptr<const NamedValueDef>> namedValues_;  // lowercase keys
+        std::unordered_map<std::string, std::vector<std::string>> refreshIndex_;  // lowercase event -> value keys
+        void RebuildRefreshIndex();  // with mutex_ held
         std::vector<NamedResolver> resolvers_;
         std::vector<CategoryInfo> categories_;
         std::unordered_map<std::string, std::string> sourceLabels_;  // lowercase id -> label

@@ -20,6 +20,7 @@ namespace ConditionEngine {
             if (!NamedValueDef::IsValidName(name)) return nullptr;
             auto def = std::make_shared<NamedValueDef>();
             def->name = name;
+            def->key = Lower(name);
             def->pushed = true;
             def->global = global;
             def->scope = global ? NamedValueDef::Scope::Global : NamedValueDef::Scope::Actor;
@@ -66,6 +67,7 @@ namespace ConditionEngine {
         std::lock_guard lock(mutex_);
         entries_.clear();
         ended_.clear();
+        count_ = 0;
     }
 
     void PushedValues::ExpireDue() {
@@ -78,6 +80,7 @@ namespace ConditionEngine {
                     expired.push_back(it->first.first);
                     ended_[it->first] = Ended::Expired;
                     it = entries_.erase(it);
+                    count_ = entries_.size();
                 } else {
                     ++it;
                 }
@@ -101,6 +104,7 @@ namespace ConditionEngine {
             std::lock_guard lock(mutex_);
             entries_[{key, Lower(name)}] = entry;
             ended_.erase({key, Lower(name)});
+            count_ = entries_.size();
         }
         Watcher::Get().PostEvent(EventDependency::Value, key == kGlobalKey ? Watcher::kAllActors : key);
         return true;
@@ -111,6 +115,7 @@ namespace ConditionEngine {
         {
             std::lock_guard lock(mutex_);
             removed = entries_.erase({key, Lower(name)}) > 0;
+            count_ = entries_.size();
             if (removed) ended_[{key, Lower(name)}] = Ended::Cleared;
         }
         if (removed) Watcher::Get().PostEvent(EventDependency::Value, key == kGlobalKey ? Watcher::kAllActors : key);
@@ -141,7 +146,12 @@ namespace ConditionEngine {
     }
 
     std::optional<ValueResult> PushedValues::Read(const NamedValueDef& def, RE::Actor* actor) const {
-        const std::string name = Lower(def.name);
+        if (count_.load(std::memory_order_acquire) == 0) {
+            if (def.pushed && !def.value && def.pushedDefault) return ValueResult::Of(*def.pushedDefault);
+            return std::nullopt;
+        }
+        std::string lowered;
+        const std::string& name = def.key.empty() ? (lowered = Lower(def.name)) : def.key;
         const auto now = ValueResult::Clock::now();
         {
             std::lock_guard lock(mutex_);

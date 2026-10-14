@@ -27,6 +27,7 @@ namespace ConditionEngine {
         ComparisonOperator operation;
         mutable RE::TESFaction* cachedFaction = nullptr;
         mutable bool cacheAttempted = false;
+        mutable std::uint64_t attemptRevision = 0;  // availability revision of the last attempt
     };
 
 } // namespace ConditionEngine

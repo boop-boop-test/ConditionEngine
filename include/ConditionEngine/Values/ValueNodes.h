@@ -4,14 +4,17 @@
 
 #include "ConditionEngine/Value.h"
 
+#include <mutex>
+
 namespace ConditionEngine {
 
     struct TypeInfo;
+    struct NamedValueDef;
 
     // 3.5
     class LiteralValue : public Value {
     public:
-        explicit LiteralValue(double value) : value_(value) {}
+        explicit LiteralValue(double value) : value_(value) { statsSlot = 1; }  // Stats::kLiteral
         ValueResult Read(const EvaluationContext&) const override { return ValueResult::Of(value_); }
         EventDependency GetEventDependencies() const override { return EventDependency::None; }
         bool ReadsActor() const override { return false; }
@@ -45,10 +48,11 @@ namespace ConditionEngine {
         std::vector<std::shared_ptr<const Value>> args_;
     };
 
-    // $name - resolved by name on every read, so redefinitions take effect immediately
+    // $name - bound to its definition until the availability revision moves (every
+    // registration, removal or preset reload does), so redefinitions take effect at once
     class NamedValueRef : public Value {
     public:
-        explicit NamedValueRef(std::string name) : name_(std::move(name)) {}
+        explicit NamedValueRef(std::string name);
 
         ValueResult Read(const EvaluationContext& context) const override;
         EventDependency GetEventDependencies() const override;
@@ -58,13 +62,21 @@ namespace ConditionEngine {
         const std::string& GetName() const { return name_; }
 
     private:
+        std::shared_ptr<const NamedValueDef> Bind() const;
+
         std::string name_;
+        std::string key_;  // lowercase
+        mutable std::mutex bindMutex_;
+        mutable std::uint64_t boundRevision_ = ~0ull;
+        mutable std::shared_ptr<const NamedValueDef> bound_;
     };
 
     // Any condition read as 1 (true) / 0 (false)
     class TruthValue : public Value {
     public:
-        explicit TruthValue(std::shared_ptr<const Condition> condition) : condition_(std::move(condition)) {}
+        explicit TruthValue(std::shared_ptr<const Condition> condition) : condition_(std::move(condition)) {
+            statsSlot = 4;  // Stats::kTruth
+        }
 
         ValueResult Read(const EvaluationContext& context) const override;
         EventDependency GetEventDependencies() const override;
@@ -78,8 +90,7 @@ namespace ConditionEngine {
     // A numeric condition type read as its number (Condition::ReadValue)
     class TypeValue : public Value {
     public:
-        TypeValue(const TypeInfo* type, std::shared_ptr<const Condition> condition)
-            : type_(type), condition_(std::move(condition)) {}
+        TypeValue(const TypeInfo* type, std::shared_ptr<const Condition> condition);
 
         ValueResult Read(const EvaluationContext& context) const override;
         EventDependency GetEventDependencies() const override;

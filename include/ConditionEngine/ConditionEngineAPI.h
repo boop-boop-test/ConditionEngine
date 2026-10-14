@@ -31,11 +31,12 @@
 ///   6 - Catalog organisation: shared topical categories (RegisterCategory), origin labels
 ///       (RegisterSource), named-condition metadata (RegisterNamedEx), offer / owner / tags on
 ///       every item, GetCatalogEx for a picker's view
+///   7 - Cost counters: GetStats / ResetStats / SetStatsEnabled
 
 #include <stdint.h>
 #include "ConditionEngine/Export.h"
 
-#define CONDITIONENGINE_API_VERSION 6
+#define CONDITIONENGINE_API_VERSION 7
 
 #ifdef __cplusplus
 extern "C" {
@@ -260,6 +261,25 @@ CONDITIONENGINE_API int32_t ConditionEngine_Refresh(CE_WatchHandle watch);
 /// v2: Default full-poll interval for watches (initially ConditionEngine.ini, 10 s).
 CONDITIONENGINE_API void ConditionEngine_SetPollInterval(uint32_t milliseconds);
 CONDITIONENGINE_API uint32_t ConditionEngine_GetPollInterval(void);
+
+// ── Cost counters (v7) ───────────────────────────────────────────────────────
+
+/// JSON, any thread:
+///   {"enabled": bool, "sinceMs": int,
+///    "watcher": {"ticks", "tickTotalUs", "tickAverageUs", "tickMaxUs", "lastTickUs",
+///                "conditionEvaluations", "valueSamples", "postedEvents", "drains",
+///                "conditionWatches", "valueWatches"},
+///    "availability": {"checks", "totalUs"},
+///    "papyrusCalls": {"dispatched", "completed", "failed", "timedOut"},
+///    "types": [{"name", "evaluations", "reads", "totalUs", "selfUs"}]}
+/// watcher / availability / papyrusCalls are always counted. "types" (per condition type
+/// and value node: Literal, Math, NamedValue, Truth) is filled only while enabled, as it
+/// times every node: totalUs includes nested nodes, selfUs does not. Only types with
+/// activity are listed. Counts run since the last ResetStats ("sinceMs").
+CONDITIONENGINE_API uint32_t ConditionEngine_GetStats(char* buf, uint32_t bufSize);
+CONDITIONENGINE_API void ConditionEngine_ResetStats(void);
+/// Per-type timing on (non-zero) or off (default off).
+CONDITIONENGINE_API void ConditionEngine_SetStatsEnabled(int32_t enabled);
 
 /// Signals that host-owned state changed. `actor` null = all watched actors. Any thread;
 /// notifications before the main thread drains them merge (v5).

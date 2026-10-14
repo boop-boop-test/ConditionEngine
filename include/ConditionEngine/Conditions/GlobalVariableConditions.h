@@ -26,6 +26,7 @@ namespace ConditionEngine {
         ComparisonOperator operation;
         mutable RE::TESGlobal* cachedGlobal = nullptr;
         mutable bool cacheAttempted = false;
+        mutable std::uint64_t attemptRevision = 0;  // availability revision of the last attempt
     };
 
 } // namespace ConditionEngine

@@ -1,4 +1,5 @@
 #include "ConditionEngine/Conditions/FactionConditions.h"
+#include "ConditionEngine/Availability.h"
 #include "ConditionEngine/Condition.h"
 #include "ConditionEngine/EvaluationContext.h"
 #include "ConditionEngine/Forms.h"
@@ -34,8 +35,10 @@ namespace ConditionEngine {
 
     RE::TESFaction* FactionCondition::ResolveFaction() const {
         // Lazy-cache the faction pointer on first use
-        if (!cacheAttempted) {
+        // Retried when the availability revision moves (plugins loaded, definitions changed)
+        if (!cacheAttempted || (!cachedFaction && attemptRevision != Availability::Get().Revision())) {
             cacheAttempted = true;
+            attemptRevision = Availability::Get().Revision();
             if (!factionName.empty()) {
                 // Try ParseFormString first (canonical "0xHEX|Plugin.esp" format)
                 if (Forms::IsFormString(factionName)) {

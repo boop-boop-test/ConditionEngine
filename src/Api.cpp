@@ -7,6 +7,7 @@
 #include "ConditionEngine/EvaluationContext.h"
 #include "ConditionEngine/Expression.h"
 #include "ConditionEngine/Registry.h"
+#include "ConditionEngine/Stats.h"
 #include "ConditionEngine/Value.h"
 #include "ConditionEngine/Values/PushedValues.h"
 #include "ConditionEngine/Watcher.h"
@@ -295,7 +296,6 @@ CONDITIONENGINE_API void ConditionEngine_Release(CE_Handle handle) {
 CONDITIONENGINE_API int32_t ConditionEngine_Evaluate(CE_Handle handle, void* actor) {
     auto condition = Lookup(handle);
     if (!condition) return -1;
-    if (!Availability::Get().Check(*condition).Ready()) return 0;
     return Evaluate(*condition, ActorOrPlayer(actor)) ? 1 : 0;
 }
 
@@ -434,7 +434,6 @@ CONDITIONENGINE_API int32_t ConditionEngine_EvaluateNamed(const char* key, void*
     if (!key) return -1;
     auto condition = Registry::Get().FindNamed(key);
     if (!condition) return -1;
-    if (!Availability::Get().Check(*condition).Ready()) return 0;
     return Evaluate(*condition, ActorOrPlayer(actor)) ? 1 : 0;
 }
 
@@ -571,7 +570,7 @@ CONDITIONENGINE_API uint32_t ConditionEngine_GetJsonSchema(char* buf, uint32_t b
 // Availability reads use snapshots and never invoke game APIs or evaluation callbacks.
 CONDITIONENGINE_API uint32_t ConditionEngine_GetAvailability(CE_Handle handle, char* buf, uint32_t bufSize) {
     const auto condition = Lookup(handle);
-    const auto status = condition ? Availability::Get().Check(*condition) :
+    const auto status = condition ? condition->CheckAvailability() :
         AvailabilityStatus{AvailabilityState::Unavailable, "Invalid condition handle"};
     return WriteString(status.ToJson().dump(), buf, bufSize);
 }
@@ -644,6 +643,14 @@ CONDITIONENGINE_API uint32_t ConditionEngine_GetPollInterval(void) {
     return static_cast<uint32_t>(Watcher::Get().GetPollInterval().count());
 }
 
+CONDITIONENGINE_API uint32_t ConditionEngine_GetStats(char* buf, uint32_t bufSize) {
+    return WriteString(Stats::Snapshot().dump(), buf, bufSize);
+}
+
+CONDITIONENGINE_API void ConditionEngine_ResetStats(void) { Stats::Reset(); }
+
+CONDITIONENGINE_API void ConditionEngine_SetStatsEnabled(int32_t enabled) { Stats::SetEnabled(enabled != 0); }
+
 CONDITIONENGINE_API void ConditionEngine_NotifyEvent(uint32_t dependencies, void* actor) {
     // May be called from any thread; queued for the main thread and merged per actor
     auto* target = static_cast<RE::Actor*>(actor);
@@ -703,7 +710,7 @@ CONDITIONENGINE_API uint32_t ConditionEngine_GetValueDependencies(CE_ValueHandle
 
 CONDITIONENGINE_API uint32_t ConditionEngine_GetValueAvailability(CE_ValueHandle handle, char* buf, uint32_t bufSize) {
     const auto value = LookupValue(handle);
-    const auto status = value ? Availability::Get().CheckValue(*value)
+    const auto status = value ? value->CheckAvailability()
                               : AvailabilityStatus{AvailabilityState::Unavailable, "Invalid value handle"};
     return WriteString(status.ToJson().dump(), buf, bufSize);
 }

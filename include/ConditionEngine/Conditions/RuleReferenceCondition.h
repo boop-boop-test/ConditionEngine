@@ -7,6 +7,8 @@
 #include "ConditionEngine/Condition.h"
 #include "ConditionEngine/Common.h"
 
+#include <mutex>
+
 namespace ConditionEngine {
 
     class RuleReferenceCondition : public Condition {
@@ -22,10 +24,16 @@ namespace ConditionEngine {
         std::vector<std::string> Validate() const override;
 
         const std::string& GetRuleName() const { return ruleName; }
-        void SetRuleName(const std::string& name) { ruleName = name; }
+        void SetRuleName(const std::string& name) {
+            ruleName = name;
+            Unbind();
+        }
 
         const std::string& GetRuleUUID() const { return ruleUUID; }
-        void SetRuleUUID(const std::string& uuid) { ruleUUID = uuid; }
+        void SetRuleUUID(const std::string& uuid) {
+            ruleUUID = uuid;
+            Unbind();
+        }
 
         bool IsInverted() const { return inverted; }
 
@@ -33,9 +41,23 @@ namespace ConditionEngine {
         const std::string& GetKey() const { return ruleUUID.empty() ? ruleName : ruleUUID; }
 
     private:
+        // The named condition, looked up by key (then display name). Engine-owned ones are
+        // kept until the availability revision moves; host-resolved ones (DressCode rules)
+        // are looked up every time, since hosts change them without moving it.
+        std::shared_ptr<const Condition> Resolve() const;
+        void Unbind() {
+            std::lock_guard lock(bindMutex_);
+            boundRevision_ = ~0ull;
+            bound_.reset();
+        }
+
         std::string ruleName;
         std::string ruleUUID;
         bool inverted;
+
+        mutable std::mutex bindMutex_;
+        mutable std::uint64_t boundRevision_ = ~0ull;
+        mutable std::shared_ptr<const Condition> bound_;
     };
 
 } // namespace ConditionEngine

@@ -82,9 +82,11 @@ set(CONDITION_ENGINE_HEADERS
     include/ConditionEngine/Conditions/WeatherConditions.h
     include/ConditionEngine/Conditions/WorldConditions.h
     include/ConditionEngine/Settings.h
+    include/ConditionEngine/Stats.h
     include/ConditionEngine/Value.h
     include/ConditionEngine/ValueResult.h
     include/ConditionEngine/Values/PushedValues.h
+    include/ConditionEngine/Values/RefreshOn.h
     include/ConditionEngine/Values/ValueNodes.h
 )
 
@@ -121,9 +123,11 @@ set(CONDITION_ENGINE_SOURCES
     src/Conditions/WeatherConditions.cpp
     src/Conditions/WorldConditions.cpp
     src/Settings.cpp
+    src/Stats.cpp
     src/Value.cpp
     src/Conditions/CompareCondition.cpp
     src/Values/PushedValues.cpp
+    src/Values/RefreshOn.cpp
 )
 
 # DLL-only: exported C API, Papyrus natives and the SKSE plugin entry point.
@@ -180,7 +184,7 @@ source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES
 ###############################################################################
 option(CONDITIONENGINE_BUILD_TESTS "Build ConditionEngine unit tests" ${PROJECT_IS_TOP_LEVEL})
 if(PROJECT_IS_TOP_LEVEL AND CONDITIONENGINE_BUILD_TESTS)
-    add_executable(condition-engine-tests tests/ExpressionTests.cpp tests/ValueTests.cpp ${CONDITION_ENGINE_SOURCES})
+    add_executable(condition-engine-tests tests/ExpressionTests.cpp tests/ValueTests.cpp tests/Benchmark.cpp ${CONDITION_ENGINE_SOURCES})
     target_compile_definitions(condition-engine-tests PRIVATE CONDITIONENGINE_STATIC)
     target_include_directories(condition-engine-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
     target_link_libraries(condition-engine-tests PRIVATE CommonLibSSE::CommonLibSSE spdlog::spdlog)

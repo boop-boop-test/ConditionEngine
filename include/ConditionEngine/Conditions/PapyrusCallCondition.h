@@ -30,6 +30,10 @@ namespace ConditionEngine {
             std::string form;  // empty = static call
             bool passActor = true;
             double intervalSeconds = 1.0;
+            std::string key;  // lowercase "form|script.function"; filled by the condition (bind at compile)
+
+            // The key for script / function / form, lowercase
+            static std::string MakeKey(const Call& call);
         };
 
         PapyrusCallCondition(Call call, ComparisonOperator op, double value);
@@ -60,6 +64,10 @@ namespace ConditionEngine {
         // Drops every result (game load); late results from before are ignored
         void ClearAll();
 
+        // The next read of this call re-dispatches it whatever its interval (refreshOn).
+        // `actorId` 0 = every actor's copy of the call.
+        void Expire(const PapyrusCallCondition::Call& call, RE::FormID actorId);
+
     private:
         PapyrusCalls() = default;
 
@@ -74,14 +82,17 @@ namespace ConditionEngine {
             std::uint64_t request = 0;  // 0 = never requested
             bool pending = false;
             bool failed = false;
+            bool expired = false;  // re-dispatch on the next read (refreshOn)
             std::string reason;
         };
 
-        void Complete(const std::string& key, std::uint64_t generation, std::uint64_t request, RE::FormID actorId,
+        void Complete(const std::string& callKey, RE::FormID slot, std::uint64_t generation, std::uint64_t request,
+                      RE::FormID actorId,
                       std::optional<double> value, std::string reason);
 
         std::mutex mutex_;
-        std::unordered_map<std::string, Sample> samples_;
+        // call key -> actor (0 when the call takes no actor) -> latest result
+        std::unordered_map<std::string, std::unordered_map<RE::FormID, Sample>> samples_;
         std::uint64_t generation_ = 1;
         std::uint64_t nextRequest_ = 0;
     };

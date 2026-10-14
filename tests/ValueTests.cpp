@@ -4,7 +4,9 @@
 #include "ConditionEngine/ConditionEngine.h"
 #include "ConditionEngine/Availability.h"
 #include "ConditionEngine/Expression.h"
+#include "ConditionEngine/Stats.h"
 #include "ConditionEngine/Values/PushedValues.h"
+#include "ConditionEngine/Values/RefreshOn.h"
 #include "ConditionEngine/Values/ValueNodes.h"
 
 #include <cmath>
@@ -513,6 +515,78 @@ void RunValueTests(CheckFn check) {
         Check(valuesOnly["types"].empty() && !valuesOnly["namedValues"].empty(), "include limits the sections");
 
         registry.UnregisterNamed("cat_talking");
+    }
+
+    // ── refreshOn (issue 089) ────────────────────────────────────────────────
+    {
+        Define("refreshed", json{{"expr", "1"}, {"refreshOn", {"Test_Tick", "Test_Food"}}});
+        Define("refreshed_too", json{{"expr", "$refreshed + 1"}, {"refreshOn", {"test_tick"}}});
+        Check(registry.ValuesRefreshedBy("TEST_TICK").size() == 2, "event names ignore case and index both values");
+        Check(registry.ValuesRefreshedBy("Test_Food").size() == 1, "each listed event is indexed");
+        Check(registry.ValuesRefreshedBy("Other_Event").empty(), "unlisted events refresh nothing");
+        Check(RefreshOn::OnModEvent("Test_Tick", nullptr) == 2, "a mod event refreshes its values (no watches: no-op)");
+        Check(registry.FindNamedValue("refreshed")->ToJson()["refreshOn"].size() == 2, "refreshOn appears in the catalog");
+        registry.UnregisterNamedValue("refreshed_too");
+        Check(registry.ValuesRefreshedBy("test_tick").size() == 1, "unregistering updates the index");
+    }
+
+    // ── Cached availability (issue 088 step 2) ───────────────────────────────
+    {
+        std::string error;
+        auto value = Expression::CompileValueAny("$cache_probe + 1", &error);
+        auto condition = Expression::CompileAny("$cache_probe > 0", &error);
+        Check(value && !value->CheckAvailability().Ready(), "cached value availability starts unavailable");
+        Check(condition && !condition->CheckAvailability().Ready(), "cached condition availability starts unavailable");
+        Define("cache_probe", "5");  // a registration moves the revision
+        Check(value->CheckAvailability().Ready(), "a named value registration refreshes cached value availability");
+        Check(condition->CheckAvailability().Ready(), "and cached condition availability");
+        registry.UnregisterNamedValue("cache_probe");
+        Check(!condition->CheckAvailability().Ready(), "removal is seen too");
+
+        auto group = std::make_unique<LogicalCondition>(LogicalOperator::And);
+        group->AddChild(std::make_unique<ConstantCondition>(true));
+        Check(group->CheckAvailability().Ready(), "group available");
+        group->AddChild(Expression::CompileAny("$cache_probe > 0", &error));
+        Check(!group->CheckAvailability().Ready(), "AddChild invalidates the cached result");
+        auto copy = group->CloneComplete();
+        Check(copy && !copy->CheckAvailability().Ready(), "a clone computes its own");
+
+        // Host-resolved rules change without moving the revision: never cached
+        static bool hostRuleExists = false;
+        registry.AddNamedResolver([](const std::string& key) -> std::shared_ptr<const Condition> {
+            if (key != "CacheHostRule" || !hostRuleExists) return nullptr;
+            return std::make_shared<ConstantCondition>(true);
+        });
+        auto host = Expression::CompileAny("@CacheHostRule", &error);
+        Check(host && !host->CheckAvailability().Ready(), "missing host rule is unavailable");
+        hostRuleExists = true;  // the host adds it without telling the engine
+        Check(host->CheckAvailability().Ready(), "host-resolved rules are re-checked, not cached");
+    }
+
+    // ── Stats (issue 088) ────────────────────────────────────────────────────
+    {
+        Stats::Reset();
+        Stats::SetEnabled(true);
+        std::string error;
+        auto condition = Expression::CompileAny("$doubled > 9 && true", &error);
+        EvaluationContext context(nullptr);
+        Check(condition && condition->EvaluateAvailable(context), "stats test condition evaluates");
+        Stats::SetEnabled(false);
+        const auto snapshot = Stats::Snapshot();
+        auto row = [&](const std::string& name) {
+            for (const auto& t : snapshot["types"]) {
+                if (t["name"] == name) return t;
+            }
+            return json();
+        };
+        Check(row("Compare").value("evaluations", 0) >= 1, "Compare evaluations counted: " + snapshot.dump());
+        Check(row("NamedValue").value("reads", 0) >= 2, "named value reads counted ($doubled -> $base)");
+        Check(row("Logical").value("evaluations", 0) == 1, "the root counted once");
+        const auto logical = row("Logical");
+        Check(logical.value("totalUs", 0.0) >= logical.value("selfUs", 0.0), "self time excludes children");
+        Check(snapshot["availability"].value("checks", 0) >= 1, "availability checks counted");
+        Stats::Reset();
+        Check(Stats::Snapshot()["types"].empty(), "Reset clears per-type counters");
     }
 
     Check(registry.UnregisterSource("value-tests") > 0, "named values unregister by source");

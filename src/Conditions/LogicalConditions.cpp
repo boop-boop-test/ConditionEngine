@@ -13,19 +13,19 @@ namespace ConditionEngine {
         switch (operation) {
             case LogicalOperator::And:
                 for (const auto& child : children) {
-                    if (!child->Evaluate(context)) return false;
+                    if (!child->EvaluateCounted(context)) return false;
                 }
                 return true;
                 
             case LogicalOperator::Or:
                 for (const auto& child : children) {
-                    if (child->Evaluate(context)) return true;
+                    if (child->EvaluateCounted(context)) return true;
                 }
                 return false;
                 
             case LogicalOperator::Not:
                 if (children.size() > 0) {
-                    return !children[0]->Evaluate(context);
+                    return !children[0]->EvaluateCounted(context);
                 }
                 return true;
         }
@@ -35,7 +35,7 @@ namespace ConditionEngine {
     TriResult LogicalCondition::EvaluateTri(const EvaluationContext& context) const {
         if (operation == LogicalOperator::Not) {
             if (children.empty()) return TriResult::Of(true);
-            auto r = children[0]->EvaluateTri(context);
+            auto r = children[0]->EvaluateTriCounted(context);
             if (!r.Decided()) return r;
             return TriResult::Of(r.state == TriState::False);
         }
@@ -44,7 +44,7 @@ namespace ConditionEngine {
         const TriState decisive = operation == LogicalOperator::And ? TriState::False : TriState::True;
         std::optional<TriResult> pending, unavailable;
         for (const auto& child : children) {
-            auto r = child->EvaluateTri(context);
+            auto r = child->EvaluateTriCounted(context);
             if (r.state == decisive) return r;
             if (r.state == TriState::Pending && !pending) pending = std::move(r);
             else if (r.state == TriState::Unavailable && !unavailable) unavailable = std::move(r);
@@ -111,11 +111,13 @@ namespace ConditionEngine {
 
     void LogicalCondition::AddChild(std::unique_ptr<Condition> condition) {
         children.push_back(std::move(condition));
+        InvalidateAvailability();
     }
 
     void LogicalCondition::RemoveChild(std::size_t index) {
         if (index < children.size()) {
             children.erase(children.begin() + index);
+            InvalidateAvailability();
         }
     }
 

@@ -15,8 +15,8 @@ namespace ConditionEngine {
 
     TriResult CompareCondition::EvaluateTri(const EvaluationContext& context) const {
         if (!left_ || !right_) return TriResult::Of(false);
-        const auto lhs = left_->Read(context);
-        const auto rhs = right_->Read(context);
+        const auto lhs = left_->ReadCounted(context);
+        const auto rhs = right_->ReadCounted(context);
         if (lhs.status == ValueStatus::Pending) return TriResult::Pending(lhs.reason);
         if (rhs.status == ValueStatus::Pending) return TriResult::Pending(rhs.reason);
         if (!lhs.Ok()) return TriResult::Unavailable(lhs.reason);

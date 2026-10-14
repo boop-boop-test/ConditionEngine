@@ -69,8 +69,12 @@ namespace {
 }
 
 void RunValueTests(void (*check)(bool ok, const std::string& what));  // ValueTests.cpp
+int RunBenchmark();                                                    // Benchmark.cpp
 
 int main(int argc, char** argv) {
+    // --bench: timing benchmark (issue 088), no checks
+    if (argc > 1 && std::strcmp(argv[1], "--bench") == 0) return RunBenchmark();
+
     // --dump-catalog <file> / --dump-schema <file>: write generated JSON and exit
     for (int i = 1; i + 1 < argc; i += 2) {
         nlohmann::json out;

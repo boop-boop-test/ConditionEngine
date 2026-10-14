@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ConditionEngine/Condition.h"
+#include <atomic>
 #include <functional>
 #include <mutex>
 #include <unordered_set>
@@ -18,6 +19,19 @@ namespace ConditionEngine {
         nlohmann::json ToJson() const;
         bool operator==(const AvailabilityStatus&) const = default;
     };
+
+    namespace detail {
+        // Per-object availability cache, owned by Condition / Value (issue 088 step 2)
+        struct AvailabilityMemo {
+            std::mutex mutex;
+            std::uint64_t revision = ~0ull;  // never matches until computed
+            AvailabilityStatus status;
+        };
+
+        // The memo in `slot` (created on first use), or `compute()` when its revision is stale
+        AvailabilityStatus CachedCheck(std::atomic<AvailabilityMemo*>& slot,
+                                       const std::function<AvailabilityStatus()>& compute);
+    }
 
     // Snapshot reads never touch game state. Publishers notify subscribers outside the lock,
     // on the publishing thread; callbacks must be thread-safe and may query/re-enter this API.
@@ -52,6 +66,6 @@ namespace ConditionEngine {
         std::unordered_map<std::string, AvailabilityStatus> types_;
         std::unordered_map<std::uint32_t, ChangedFn> subscribers_;
         std::uint32_t nextSubscription_ = 1;
-        std::uint64_t revision_ = 0;
+        std::atomic<std::uint64_t> revision_{0};
     };
 }

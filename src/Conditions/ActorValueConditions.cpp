@@ -1,4 +1,5 @@
 #include "ConditionEngine/Conditions/ActorValueConditions.h"
+#include "ConditionEngine/Availability.h"
 #include "ConditionEngine/Condition.h"
 #include "ConditionEngine/EvaluationContext.h"
 
@@ -40,10 +41,15 @@ namespace ConditionEngine {
 
         RE::ActorValue av = actorValue;
         if (av == RE::ActorValue::kNone && !actorValueName.empty()) {
-            auto avList = RE::ActorValueList::GetSingleton();
-            if (avList) {
-                av = avList->LookupActorValueByName(actorValueName.c_str());
+            // Looked up by name once; a failed lookup is retried when the revision moves
+            const auto revision = Availability::Get().Revision();
+            if (resolved_ == RE::ActorValue::kNone && resolveRevision_ != revision) {
+                if (auto avList = RE::ActorValueList::GetSingleton()) {
+                    resolved_ = avList->LookupActorValueByName(actorValueName.c_str());
+                    resolveRevision_ = revision;
+                }
             }
+            av = resolved_;
         }
         if (av == RE::ActorValue::kNone) {
             return ValueResult::Fail(ValueStatus::Error, "unknown actor value '" + actorValueName + "'");

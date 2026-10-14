@@ -154,6 +154,7 @@ namespace ConditionEngine {
             RE::FormID actorId = 0;  // 0 = player
             WatchCallback callback;
             EventDependency dependencies = EventDependency::None;
+            EventDependency extraDependencies = EventDependency::None;  // the watch's own, kept on refresh
             std::chrono::milliseconds pollInterval{0};
             Clock::time_point lastEvaluated{};
             std::optional<bool> lastResult;
@@ -182,6 +183,7 @@ namespace ConditionEngine {
             std::string key;              // definition JSON + actor
             RE::FormID actorId = 0;       // 0 = player (global values always use 0)
             EventDependency dependencies = EventDependency::None;
+            EventDependency extraDependencies = EventDependency::None;  // union of its watches' extras
             std::chrono::milliseconds interval{WatchOptions::kNever};  // shortest of its watches
             Clock::time_point lastSampled{};
             std::uint64_t checkedRevision = ~0ull;  // availability cache
@@ -209,6 +211,10 @@ namespace ConditionEngine {
         // Shortest active value-watch interval (for the timer thread)
         std::chrono::milliseconds ShortestValueInterval() const;
         void DrainPosted();
+        // Recomputes dependency masks when the availability revision moved (named values or
+        // rules redefined), so existing watches follow what their definitions now read
+        void RefreshDependencies();
+        std::atomic<std::uint64_t> dependenciesRevision_{~0ull};
 
         mutable std::mutex mutex_;
         std::unordered_map<WatchId, Entry> entries_;

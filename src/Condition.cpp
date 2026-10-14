@@ -2,6 +2,7 @@
 #include "ConditionEngine/Availability.h"
 #include "ConditionEngine/Forms.h"
 #include "ConditionEngine/Registry.h"
+#include "ConditionEngine/Stats.h"
 
 #include <atomic>
 #include <regex>
@@ -9,8 +10,33 @@
 
 namespace ConditionEngine {
 
+    Condition::~Condition() { delete availabilityMemo_.load(); }
+
     bool Condition::EvaluateAvailable(const EvaluationContext& context) const {
-        return Availability::Get().Check(*this).Ready() && Evaluate(context);
+        return CheckAvailability().Ready() && EvaluateCounted(context);
+    }
+
+    AvailabilityStatus Condition::CheckAvailability() const {
+        return detail::CachedCheck(availabilityMemo_, [this] { return Availability::Get().Check(*this); });
+    }
+
+    void Condition::InvalidateAvailability() const {
+        if (auto* memo = availabilityMemo_.load(std::memory_order_acquire)) {
+            std::lock_guard lock(memo->mutex);
+            memo->revision = ~0ull;
+        }
+    }
+
+    bool Condition::EvaluateCounted(const EvaluationContext& context) const {
+        if (!Stats::Enabled()) return Evaluate(context);
+        Stats::Scope scope(typeInfo ? typeInfo->statsSlot : Stats::kUnregistered, false);
+        return Evaluate(context);
+    }
+
+    TriResult Condition::EvaluateTriCounted(const EvaluationContext& context) const {
+        if (!Stats::Enabled()) return EvaluateTri(context);
+        Stats::Scope scope(typeInfo ? typeInfo->statsSlot : Stats::kUnregistered, false);
+        return EvaluateTri(context);
     }
 
     // ── Dot-accessor helper ─────────────────────────────────────────────────

@@ -3,9 +3,11 @@
 #include "ConditionEngine/EvaluationContext.h"
 #include "ConditionEngine/Expression.h"
 #include "ConditionEngine/Registry.h"
+#include "ConditionEngine/Stats.h"
 #include "ConditionEngine/Values/PushedValues.h"
 #include "ConditionEngine/Values/ValueNodes.h"
 
+#include <array>
 #include <charconv>
 #include <cmath>
 
@@ -100,7 +102,19 @@ namespace ConditionEngine {
 
     // ── Value ────────────────────────────────────────────────────────────────
 
+    Value::~Value() { delete availabilityMemo_.load(); }
+
+    AvailabilityStatus Value::CheckAvailability() const {
+        return detail::CachedCheck(availabilityMemo_, [this] { return Availability::Get().CheckValue(*this); });
+    }
+
     bool Value::ReadsActor() const { return DependsOnActor(GetEventDependencies()); }
+
+    ValueResult Value::ReadCounted(const EvaluationContext& context) const {
+        if (!Stats::Enabled()) return Read(context);
+        Stats::Scope scope(statsSlot, true);
+        return Read(context);
+    }
 
     std::unique_ptr<Value> Value::FromJson(const json& j, std::string* error) {
         auto fail = [&](std::string message) -> std::unique_ptr<Value> {
@@ -163,7 +177,7 @@ namespace ConditionEngine {
     }
 
     ValueResult ReadValueAvailable(const Value& value, const EvaluationContext& context) {
-        const auto status = Availability::Get().CheckValue(value);
+        const auto status = value.CheckAvailability();
         if (!status.Ready()) {
             return ValueResult::Fail(status.state == AvailabilityState::Pending ? ValueStatus::Pending : ValueStatus::Unavailable,
                                      status.reason);
@@ -190,7 +204,9 @@ namespace ConditionEngine {
         };
     }
 
-    MathValue::MathValue(Op op, std::vector<std::shared_ptr<const Value>> args) : op_(op), args_(std::move(args)) {}
+    MathValue::MathValue(Op op, std::vector<std::shared_ptr<const Value>> args) : op_(op), args_(std::move(args)) {
+        statsSlot = Stats::kMath;
+    }
 
     std::optional<MathValue::Op> MathValue::ParseOp(std::string_view name) {
         for (const auto& [op, text] : kMathOps) {
@@ -220,14 +236,22 @@ namespace ConditionEngine {
 
     ValueResult MathValue::Read(const EvaluationContext& context) const {
         ValueResult result;
-        std::vector<double> v;
-        v.reserve(args_.size());
-        for (const auto& arg : args_) {
-            auto r = arg ? arg->Read(context) : ValueResult::Fail(ValueStatus::Error, "missing argument");
-            MergeValueStatus(result, r);
-            v.push_back(r.value);
+        // Arguments in a fixed buffer: only min / max with more than 8 arguments allocate
+        std::array<double, 8> fixed{};
+        std::vector<double> spill;
+        double* v = fixed.data();
+        if (args_.size() > fixed.size()) {
+            spill.resize(args_.size());
+            v = spill.data();
         }
-        if (v.empty()) return ValueResult::Fail(ValueStatus::Error, "no arguments");
+        for (std::size_t i = 0; i < args_.size(); ++i) {
+            const auto& arg = args_[i];
+            auto r = arg ? arg->ReadCounted(context) : ValueResult::Fail(ValueStatus::Error, "missing argument");
+            if (!r.Ok() || r.sampledAt) MergeValueStatus(result, r);
+            v[i] = r.value;
+        }
+        if (args_.empty()) return ValueResult::Fail(ValueStatus::Error, "no arguments");
+        double* end = v + args_.size();
 
         double out = 0.0;
         switch (op_) {
@@ -237,8 +261,8 @@ namespace ConditionEngine {
             case Op::Div: out = v[1] == 0.0 ? 0.0 : v[0] / v[1]; break;  // x / 0 reads 0
             case Op::Neg: out = -v[0]; break;
             case Op::Abs: out = std::abs(v[0]); break;
-            case Op::Min: out = *std::min_element(v.begin(), v.end()); break;
-            case Op::Max: out = *std::max_element(v.begin(), v.end()); break;
+            case Op::Min: out = *std::min_element(v, end); break;
+            case Op::Max: out = *std::max_element(v, end); break;
             case Op::Clamp: out = std::min(std::max(v[0], v[1]), v[2]); break;
             case Op::Lerp: out = v[0] + (v[1] - v[0]) * v[2]; break;
         }
@@ -282,22 +306,37 @@ namespace ConditionEngine {
 
     // ── Named value reference ────────────────────────────────────────────────
 
+    NamedValueRef::NamedValueRef(std::string name) : name_(std::move(name)), key_(Lower(name_)) {
+        statsSlot = Stats::kNamedValue;
+    }
+
+    std::shared_ptr<const NamedValueDef> NamedValueRef::Bind() const {
+        const auto revision = Availability::Get().Revision();
+        std::lock_guard lock(bindMutex_);
+        if (boundRevision_ != revision) {
+            bound_ = Registry::Get().FindNamedValue(key_);
+            boundRevision_ = revision;
+        }
+        return bound_;
+    }
+
     ValueResult NamedValueRef::Read(const EvaluationContext& context) const {
-        auto def = Registry::Get().FindNamedValue(name_);
+        auto def = Bind();
         if (!def) return ValueResult::Fail(ValueStatus::Unavailable, "no value named " + name_);
 
-        const std::string key = Lower(def->name);
-        if (!context.valuesInProgress.insert(key).second) {
+        auto& inProgress = context.valuesInProgress;
+        if (std::find(inProgress.begin(), inProgress.end(), def.get()) != inProgress.end()) {
             return ValueResult::Fail(ValueStatus::Error, "circular named value: " + def->name);
         }
+        inProgress.push_back(def.get());
         struct Leave {
             const EvaluationContext& context;
-            const std::string& key;
-            ~Leave() { context.valuesInProgress.erase(key); }
-        } leave{context, key};
+            ~Leave() { context.valuesInProgress.pop_back(); }
+        } leave{context};
+        const std::string& key = def->key.empty() ? key_ : def->key;
 
         ValueResult result;
-        const auto enabled = def->enabledWhen ? def->enabledWhen->EvaluateTri(context) : TriResult::Of(true);
+        const auto enabled = def->enabledWhen ? def->enabledWhen->EvaluateTriCounted(context) : TriResult::Of(true);
         const bool disabled = enabled.state == TriState::False;
         if (enabled.state == TriState::Pending) {
             // Undecided is not "disabled": report what it waits for
@@ -310,7 +349,7 @@ namespace ConditionEngine {
         } else if (auto pushed = PushedValues::Get().Read(*def, context.GetActor())) {
             result = std::move(*pushed);
         } else if (def->value) {
-            result = def->value->Read(context);
+            result = def->value->ReadCounted(context);
         } else {
             result = ValueResult::Fail(ValueStatus::Unavailable, PushedValues::Get().WhyMissing(*def, context.GetActor()));
         }
@@ -333,7 +372,7 @@ namespace ConditionEngine {
 
     EventDependency NamedValueRef::GetEventDependencies() const {
         EventDependency deps = EventDependency::Value;  // pushes and redefinitions
-        auto def = Registry::Get().FindNamedValue(name_);
+        auto def = Bind();
         if (!def) return deps;
         ResolvingGuard guard(Lower(def->name));
         if (!guard.entered) return deps;
@@ -343,7 +382,7 @@ namespace ConditionEngine {
     }
 
     bool NamedValueRef::ReadsActor() const {
-        auto def = Registry::Get().FindNamedValue(name_);
+        auto def = Bind();
         return !def || !def->global;
     }
 
@@ -356,7 +395,7 @@ namespace ConditionEngine {
 
     ValueResult TruthValue::Read(const EvaluationContext& context) const {
         if (!condition_) return ValueResult::Fail(ValueStatus::Error, "missing condition");
-        const auto r = condition_->EvaluateTri(context);
+        const auto r = condition_->EvaluateTriCounted(context);
         if (r.state == TriState::Pending) return ValueResult::Fail(ValueStatus::Pending, r.reason);
         if (r.state == TriState::Unavailable) return ValueResult::Fail(ValueStatus::Unavailable, r.reason);
         return ValueResult::Of(r.state == TriState::True ? 1.0 : 0.0);
@@ -375,6 +414,11 @@ namespace ConditionEngine {
     }
 
     // ── Numeric type ─────────────────────────────────────────────────────────
+
+    TypeValue::TypeValue(const TypeInfo* type, std::shared_ptr<const Condition> condition)
+        : type_(type), condition_(std::move(condition)) {
+        statsSlot = type_ ? type_->statsSlot : Stats::kUnregistered;
+    }
 
     ValueResult TypeValue::Read(const EvaluationContext& context) const {
         if (!condition_) return ValueResult::Fail(ValueStatus::Error, "missing condition");
@@ -427,6 +471,7 @@ namespace ConditionEngine {
         }
         if (!requiresPlugins.empty()) j["requiresPlugins"] = requiresPlugins;
         if (!requiresDlls.empty()) j["requiresDlls"] = requiresDlls;
+        if (!refreshOn.empty()) j["refreshOn"] = refreshOn;
         if (!category.empty()) j["category"] = category;
         return j;
     }
@@ -441,6 +486,7 @@ namespace ConditionEngine {
 
         auto def = std::make_shared<NamedValueDef>();
         def->name = name;
+        def->key = Lower(name);
         def->source = source;
         def->definition = definition;
 
@@ -478,6 +524,7 @@ namespace ConditionEngine {
                 def->offer = *offer;
             }
             def->requiresDlls = ReadStringList(definition, "requiresDlls");
+            def->refreshOn = ReadStringList(definition, "refreshOn");
 
             const std::string scope = definition.value("scope", "auto");
             if (IEquals(scope, "actor")) def->scope = Scope::Actor;

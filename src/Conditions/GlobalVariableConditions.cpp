@@ -1,4 +1,5 @@
 #include "ConditionEngine/Conditions/GlobalVariableConditions.h"
+#include "ConditionEngine/Availability.h"
 #include "ConditionEngine/Condition.h"
 #include "ConditionEngine/EvaluationContext.h"
 #include "ConditionEngine/Forms.h"
@@ -12,8 +13,10 @@ namespace ConditionEngine {
         if (globalName.empty()) return ValueResult::Fail(ValueStatus::Error, "no global variable specified");
 
         // Lazy-cache the global pointer on first use (form string, or editor ID - globals keep theirs)
-        if (!cacheAttempted) {
+        // Retried when the availability revision moves (plugins loaded, definitions changed)
+        if (!cacheAttempted || (!cachedGlobal && attemptRevision != Availability::Get().Revision())) {
             cacheAttempted = true;
+            attemptRevision = Availability::Get().Revision();
             cachedGlobal = Forms::LookupForm<RE::TESGlobal>(globalName);
             if (!cachedGlobal) {
                 SKSE::log::warn("GlobalVariableCondition: Could not find global '{}'", globalName);

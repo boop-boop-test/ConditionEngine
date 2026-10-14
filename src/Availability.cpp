@@ -1,6 +1,7 @@
 #include "ConditionEngine/Availability.h"
 #include "ConditionEngine/Registry.h"
 #include "ConditionEngine/Conditions/CallbackCondition.h"
+#include "ConditionEngine/Stats.h"
 #include "ConditionEngine/Value.h"
 
 namespace ConditionEngine {
@@ -18,6 +19,41 @@ namespace ConditionEngine {
                 into.reason += other.reason;
             }
         }
+    }
+
+    namespace {
+        // Set while checking a tree that references host-resolved named conditions (e.g.
+        // DressCode rules): hosts change those without moving the revision, so such
+        // results are not cached
+        thread_local bool t_uncacheable = false;
+    }
+
+    AvailabilityStatus detail::CachedCheck(std::atomic<AvailabilityMemo*>& slot,
+                                           const std::function<AvailabilityStatus()>& compute) {
+        auto* memo = slot.load(std::memory_order_acquire);
+        if (!memo) {
+            auto* created = new AvailabilityMemo();
+            if (slot.compare_exchange_strong(memo, created, std::memory_order_acq_rel)) {
+                memo = created;
+            } else {
+                delete created;  // another thread won; `memo` now holds its pointer
+            }
+        }
+        // Read the revision first: a change during compute() leaves the memo stale
+        const auto revision = Availability::Get().Revision();
+        {
+            std::lock_guard lock(memo->mutex);
+            if (memo->revision == revision) return memo->status;
+        }
+        const bool outer = t_uncacheable;
+        t_uncacheable = false;
+        auto status = compute();
+        const bool uncacheable = t_uncacheable;
+        t_uncacheable = outer || uncacheable;
+        std::lock_guard lock(memo->mutex);
+        memo->revision = uncacheable ? ~0ull : revision;
+        memo->status = status;
+        return status;
     }
 
     json AvailabilityStatus::ToJson() const {
@@ -46,13 +82,19 @@ namespace ConditionEngine {
     }
 
     AvailabilityStatus Availability::Check(const Condition& condition) const {
+        const auto start = std::chrono::steady_clock::now();
         std::unordered_set<std::string> names;
-        return CheckNode(condition.ToJsonComplete(), names, 0);
+        auto status = CheckNode(condition.ToJsonComplete(), names, 0);
+        Stats::RecordAvailabilityCheck(std::chrono::steady_clock::now() - start);
+        return status;
     }
 
     AvailabilityStatus Availability::CheckValue(const Value& value) const {
+        const auto start = std::chrono::steady_clock::now();
         std::unordered_set<std::string> names;
-        return CheckValueNode(value.ToJson(), names, 0);
+        auto status = CheckValueNode(value.ToJson(), names, 0);
+        Stats::RecordAvailabilityCheck(std::chrono::steady_clock::now() - start);
+        return status;
     }
 
     AvailabilityStatus Availability::CheckValueNode(const json& node, std::unordered_set<std::string>& names,
@@ -127,6 +169,7 @@ namespace ConditionEngine {
             if (!names.insert(key).second) {
                 Merge(result, {AvailabilityState::Unavailable, "Circular named condition: " + key});
             } else {
+                if (!Registry::Get().IsEngineNamed(key)) t_uncacheable = true;
                 if (auto named = Registry::Get().FindNamed(key)) {
                     const auto definition = named->ToJsonComplete();
                     // Callback-backed named conditions use a self-reference as their serialization.
@@ -183,7 +226,7 @@ namespace ConditionEngine {
         SetLoadedPlugins(plugins);
     }
 
-    std::uint64_t Availability::Revision() const { std::lock_guard lock(mutex_); return revision_; }
+    std::uint64_t Availability::Revision() const { return revision_.load(std::memory_order_acquire); }
     std::uint32_t Availability::Subscribe(ChangedFn fn) {
         if (!fn) return 0;
         // Initialize builtins before installing a listener that may re-enter Registry::Get().
@@ -199,7 +242,7 @@ namespace ConditionEngine {
         std::uint64_t revision;
         {
             std::lock_guard lock(mutex_);
-            revision = ++revision_;
+            revision = revision_.fetch_add(1, std::memory_order_acq_rel) + 1;
             for (const auto& [id, fn] : subscribers_) { (void)id; callbacks.push_back(fn); }
         }
         for (const auto& fn : callbacks) fn(revision);

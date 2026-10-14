@@ -15,6 +15,7 @@
 #include "ConditionEngine/Common.h"
 #include "ConditionEngine/ValueResult.h"
 
+#include <atomic>
 #include <mutex>
 
 namespace ConditionEngine {
@@ -66,6 +67,7 @@ namespace ConditionEngine {
         mutable std::mutex mutex_;
         // (actor key, lowercase name)
         std::map<std::pair<RE::FormID, std::string>, Entry> entries_;
+        std::atomic<std::size_t> count_{0};  // entries_.size(), read without the lock
         // Pushes that ended, for WhyMissing; forgotten when pushed again or on ClearAll
         std::map<std::pair<RE::FormID, std::string>, Ended> ended_;
     };

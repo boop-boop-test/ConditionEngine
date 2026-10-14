@@ -2,6 +2,7 @@
 
 // Condition.h - Base condition interface plus shared enums and helpers.
 
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -14,6 +15,11 @@
 namespace ConditionEngine {
 
     class EvaluationContext;
+    struct TypeInfo;
+    struct AvailabilityStatus;
+    namespace detail {
+        struct AvailabilityMemo;
+    }
 
     // Logical operators for combining conditions
     enum class LogicalOperator {
@@ -106,16 +112,37 @@ namespace ConditionEngine {
     // Base condition interface
     class Condition {
     public:
-        virtual ~Condition() = default;
+        Condition() = default;
+        // Copies get their own (empty) availability cache
+        Condition(const Condition& other) : forcePolled(other.forcePolled), typeInfo(other.typeInfo) {}
+        Condition& operator=(const Condition& other) {
+            forcePolled = other.forcePolled;
+            typeInfo = other.typeInfo;
+            InvalidateAvailability();
+            return *this;
+        }
+        virtual ~Condition();
+
         virtual bool Evaluate(const EvaluationContext& context) const = 0;
         // Use this at rule boundaries: an unavailable child suspends the entire expression, including NOT/OR.
         bool EvaluateAvailable(const EvaluationContext& context) const;
+
+        // Availability::Check(*this), kept until the availability revision changes (plugins,
+        // type readiness, named definitions). Hosts that change a condition tree in place call
+        // InvalidateAvailability (LogicalCondition::AddChild / RemoveChild do).
+        AvailabilityStatus CheckAvailability() const;
+        void InvalidateAvailability() const;
         virtual std::string GetDescription() const = 0;
         virtual nlohmann::json ToJson() const = 0;
         virtual std::unique_ptr<Condition> Clone() const = 0;
 
         // Returns the event dependencies for this condition (what events would change its result)
         virtual EventDependency GetEventDependencies() const = 0;
+
+        // Evaluate / EvaluateTri, timed per type while Stats are enabled. Composite
+        // conditions and the Watcher call these for their children.
+        bool EvaluateCounted(const EvaluationContext& context) const;
+        TriResult EvaluateTriCounted(const EvaluationContext& context) const;
 
         // Like Evaluate, but Pending when the outcome depends on a value with no result yet
         // (an async PapyrusCall before its first answer) and Unavailable when it depends on
@@ -149,6 +176,15 @@ namespace ConditionEngine {
         // its native event dependency.  The Polled event type is ORed into its deps.
         bool forcePolled = false;
 
+        // The registered type this condition was built from (Registry::Create); null for
+        // conditions a host constructs directly. Used for per-type stats.
+        const TypeInfo* typeInfo = nullptr;
+
+    private:
+        mutable std::atomic<detail::AvailabilityMemo*> availabilityMemo_{nullptr};
+
+    public:
+
         // Returns GetEventDependencies() | Polled (if forcePolled is set).
         // All callers that build event buckets should use this instead of the virtual.
         EventDependency GetEffectiveEventDependencies() const {
@@ -167,7 +203,10 @@ namespace ConditionEngine {
         // Clone with cross-cutting fields preserved.
         std::unique_ptr<Condition> CloneComplete() const {
             auto c = Clone();
-            if (c) c->forcePolled = forcePolled;
+            if (c) {
+                c->forcePolled = forcePolled;
+                c->typeInfo = typeInfo;
+            }
             return c;
         }
     };

@@ -2,6 +2,7 @@
 #include "ConditionEngine/Conditions/CompareCondition.h"
 #include "ConditionEngine/EvaluationContext.h"
 #include "ConditionEngine/Forms.h"
+#include "ConditionEngine/Stats.h"
 #include "ConditionEngine/Watcher.h"
 
 #include <cmath>
@@ -70,6 +71,12 @@ namespace ConditionEngine {
             std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
             return s;
         }
+
+        const std::string& KeyOf(const PapyrusCallCondition::Call& call, std::string& scratch) {
+            if (!call.key.empty()) return call.key;
+            scratch = PapyrusCallCondition::Call::MakeKey(call);
+            return scratch;
+        }
     }
 
     // ── Cache and dispatcher ─────────────────────────────────────────────────
@@ -77,6 +84,21 @@ namespace ConditionEngine {
     PapyrusCalls& PapyrusCalls::Get() {
         static PapyrusCalls instance;
         return instance;
+    }
+
+    std::string PapyrusCallCondition::Call::MakeKey(const Call& call) {
+        return Lower(call.form + "|" + call.script + "." + call.function);
+    }
+
+    void PapyrusCalls::Expire(const PapyrusCallCondition::Call& call, RE::FormID actorId) {
+        std::string scratch;
+        const auto& key = KeyOf(call, scratch);
+        std::lock_guard lock(mutex_);
+        auto byCall = samples_.find(key);
+        if (byCall == samples_.end()) return;
+        for (auto& [slot, sample] : byCall->second) {
+            if (actorId == 0 || slot == actorId) sample.expired = true;
+        }
     }
 
     void PapyrusCalls::ClearAll() {
@@ -88,8 +110,9 @@ namespace ConditionEngine {
     ValueResult PapyrusCalls::Read(const PapyrusCallCondition::Call& call, RE::Actor* actor) {
         if (call.passActor && !actor) return ValueResult::Fail(ValueStatus::Unavailable, "no actor");
         const RE::FormID actorId = actor ? actor->GetFormID() : kPlayerFormId;
-        const std::string key = Lower(call.form + "|" + call.script + "." + call.function) + "@" +
-                                std::to_string(call.passActor ? actorId : 0);
+        std::string scratch;
+        const std::string& key = KeyOf(call, scratch);
+        const RE::FormID slot = call.passActor ? actorId : 0;
         const auto interval = std::chrono::duration_cast<Clock::duration>(
             std::chrono::duration<double>(std::max(call.intervalSeconds, 0.05)));
 
@@ -98,7 +121,9 @@ namespace ConditionEngine {
         std::uint64_t generation = 0, request = 0;
         {
             std::lock_guard lock(mutex_);
-            auto& sample = samples_[key];
+            auto byCall = samples_.find(key);
+            if (byCall == samples_.end()) byCall = samples_.emplace(key, std::unordered_map<RE::FormID, Sample>{}).first;
+            auto& sample = byCall->second[slot];
             const auto now = Clock::now();
             // Waiting only counts while the game runs (the VM is stopped while paused).
             // Gaps between reads count at most 2 s, so a long pause without reads is not
@@ -108,11 +133,13 @@ namespace ConditionEngine {
             }
             sample.lastObserved = now;
             if (sample.pending && sample.pendingFor > kCallTimeout) {
+                Stats::CountPapyrusCall(Stats::PapyrusOutcome::TimedOut);
                 sample.pending = false;
                 sample.failed = true;
                 sample.reason = call.script + "." + call.function + " did not answer";
             }
-            if (!sample.pending && (sample.request == 0 || now - sample.requestedAt >= interval)) {
+            if (!sample.pending && (sample.expired || sample.request == 0 || now - sample.requestedAt >= interval)) {
+                sample.expired = false;
                 sample.pending = true;
                 sample.requestedAt = now;
                 sample.pendingFor = {};
@@ -134,27 +161,31 @@ namespace ConditionEngine {
         }
 
         if (dispatch) {
+            Stats::CountPapyrusCall(Stats::PapyrusOutcome::Dispatched);
             std::string error;
             const bool started = Dispatch(call, actor,
-                [this, key, generation, request, actorId](RE::BSScript::Variable value) {
+                [this, key = std::string(key), slot, generation, request, actorId](RE::BSScript::Variable value) {
                     auto number = ToNumber(value);
-                    Complete(key, generation, request, actorId, number, number ? std::string{} : "returned no number");
+                    Complete(key, slot, generation, request, actorId, number, number ? std::string{} : "returned no number");
                 },
                 error);
-            if (!started) Complete(key, generation, request, actorId, std::nullopt, error);
+            if (!started) Complete(key, slot, generation, request, actorId, std::nullopt, error);
         }
         return result;
     }
 
-    void PapyrusCalls::Complete(const std::string& key, std::uint64_t generation, std::uint64_t request,
+    void PapyrusCalls::Complete(const std::string& callKey, RE::FormID slot, std::uint64_t generation, std::uint64_t request,
                                 RE::FormID actorId, std::optional<double> value, std::string reason) {
         {
             std::lock_guard lock(mutex_);
             if (generation != generation_) return;  // from before a game load
-            auto it = samples_.find(key);
-            if (it == samples_.end() || it->second.request != request) return;
+            auto byCall = samples_.find(callKey);
+            if (byCall == samples_.end()) return;
+            auto it = byCall->second.find(slot);
+            if (it == byCall->second.end() || it->second.request != request) return;
             auto& sample = it->second;
             sample.pending = false;
+            Stats::CountPapyrusCall(value ? Stats::PapyrusOutcome::Completed : Stats::PapyrusOutcome::Failed);
             if (value) {
                 sample.value = value;
                 sample.sampledAt = Clock::now();
@@ -171,7 +202,9 @@ namespace ConditionEngine {
     // ── Condition ────────────────────────────────────────────────────────────
 
     PapyrusCallCondition::PapyrusCallCondition(Call call, ComparisonOperator op, double value)
-        : call_(std::move(call)), op_(op), value_(value) {}
+        : call_(std::move(call)), op_(op), value_(value) {
+        call_.key = Call::MakeKey(call_);
+    }
 
     ValueResult PapyrusCallCondition::ReadValue(const EvaluationContext& context) const {
         if (call_.script.empty() || call_.function.empty()) {

@@ -3,7 +3,9 @@
 #include "ConditionEngine/Conditions/ActorConditions.h"
 #include "ConditionEngine/EvaluationContext.h"
 #include "ConditionEngine/Registry.h"
+#include "ConditionEngine/Stats.h"
 #include "ConditionEngine/Values/PushedValues.h"
+#include "ConditionEngine/Values/RefreshOn.h"
 
 #include <cmath>
 #include <thread>
@@ -195,6 +197,7 @@ namespace ConditionEngine {
 
         Entry entry;
         entry.dependencies = condition->GetEffectiveEventDependencies() | options.extraDependencies;
+        entry.extraDependencies = options.extraDependencies;
         entry.condition = std::move(condition);
         entry.actorId = ActorKey(actor);
         entry.callback = std::move(callback);
@@ -279,8 +282,25 @@ namespace ConditionEngine {
         return it != entries_.end() ? it->second.lastResult : std::nullopt;
     }
 
+    void Watcher::RefreshDependencies() {
+        const auto revision = Availability::Get().Revision();
+        if (dependenciesRevision_.exchange(revision) == revision) return;
+        {
+            std::lock_guard lock(mutex_);
+            for (auto& [id, entry] : entries_) {
+                entry.dependencies = entry.condition->GetEffectiveEventDependencies() | entry.extraDependencies;
+            }
+        }
+        std::shared_lock lock(valueMutex_);
+        for (auto& [key, sampler] : samplers_) {
+            sampler->dependencies = sampler->value->GetEventDependencies() | EventDependency::Value |
+                                    EventDependency::Availability | sampler->extraDependencies;
+        }
+    }
+
     void Watcher::NotifyEvent(EventDependency events, RE::Actor* actor) {
         if (!IsWorldReady()) return;
+        RefreshDependencies();
         const RE::FormID only = actor ? ActorKey(actor) : kAnyActor;
         Evaluate([events, only](WatchId, const Entry& entry) {
             return HasDependency(entry.dependencies, events) && (only == kAnyActor || entry.actorId == only);
@@ -299,6 +319,7 @@ namespace ConditionEngine {
         {
             std::lock_guard lock(postMutex_);
             posted_[key] |= events;
+            Stats::CountPostedEvent();
             schedule = !postQueued_;
             postQueued_ = true;
         }
@@ -319,6 +340,7 @@ namespace ConditionEngine {
             posted.swap(posted_);
             postQueued_ = false;
         }
+        Stats::CountDrain();
         if (auto it = posted.find(kAnyActor); it != posted.end()) {
             NotifyEvent(it->second, nullptr);
             posted.erase(it);
@@ -343,7 +365,12 @@ namespace ConditionEngine {
         tickQueued_ = false;
         if (!IsWorldReady()) return;
 
+        RefreshDependencies();
         const auto tickStart = Clock::now();
+        struct RecordOnExit {
+            Clock::time_point start;
+            ~RecordOnExit() { Stats::RecordTick(Clock::now() - start); }
+        } record{tickStart};
         PushedValues::Get().ExpireDue();
 
         // Value watches due for a sample (a little early beats a whole tick late)
@@ -442,6 +469,7 @@ namespace ConditionEngine {
             }
         }
         if (work.empty()) return;
+        Stats::AddConditionEvaluations(work.size());
 
         // One snapshot per actor per pass
         std::unordered_map<RE::FormID, std::unique_ptr<EvaluationContext>> contexts;
@@ -545,6 +573,7 @@ namespace ConditionEngine {
             }
             sampler = slot;
             sampler->dependencies |= options.extraDependencies;
+            sampler->extraDependencies |= options.extraDependencies;
             sampler->interval = std::min(sampler->interval, interval);
             ++sampler->users;
             entry.sampler = sampler;
@@ -603,11 +632,12 @@ namespace ConditionEngine {
 
         const auto now = Clock::now();
         const auto revision = Availability::Get().Revision();
+        Stats::AddValueSamples(due.size());
         // One context per actor per pass; contexts snapshot lazily, so this is cheap
         std::unordered_map<RE::FormID, std::unique_ptr<EvaluationContext>> contexts;
         for (const auto& sampler : due) {
             if (sampler->checkedRevision != revision) {
-                const auto status = Availability::Get().CheckValue(*sampler->value);
+                const auto status = sampler->value->CheckAvailability();
                 sampler->availability = status.state;
                 sampler->availabilityReason = status.reason;
                 sampler->checkedRevision = revision;
@@ -627,7 +657,7 @@ namespace ConditionEngine {
             } else {
                 auto& context = contexts[sampler->actorId];
                 if (!context) context = std::make_unique<EvaluationContext>(target);
-                result = sampler->value->Read(*context);
+                result = sampler->value->ReadCounted(*context);
             }
 
             sampler->lastSampled = now;
@@ -774,6 +804,7 @@ namespace ConditionEngine {
         if (auto* ui = RE::UI::GetSingleton()) {
             ui->AddEventSink<RE::MenuOpenCloseEvent>(sink);
         }
+        RefreshOn::Install();
 
         // Ticks on a background timer (every detect interval, or faster while value
         // watches need it, down to a frame); evaluation happens on the main thread

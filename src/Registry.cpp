@@ -1,5 +1,6 @@
 #include "ConditionEngine/Registry.h"
 #include "ConditionEngine/Availability.h"
+#include "ConditionEngine/Stats.h"
 
 #include <mutex>
 #include <sstream>
@@ -69,6 +70,7 @@ namespace ConditionEngine {
             info.fields.insert(at, Field::Comparison());
         }
 
+        info.statsSlot = Stats::RegisterSlot(info.name);
         auto owned = std::make_unique<TypeInfo>(std::move(info));
         for (const auto& key : keys) typeLookup_[key] = owned.get();
         types_.push_back(std::move(owned));
@@ -101,10 +103,14 @@ namespace ConditionEngine {
         // Copy the factory out so the lock is not held while it runs: factories for
         // composite types (Logical) recurse back into Create.
         ConditionFactory factory;
+        const TypeInfo* info = nullptr;
         {
             std::shared_lock lock(mutex_);
             auto it = typeLookup_.find(Lower(type));
-            if (it != typeLookup_.end()) factory = it->second->factory;
+            if (it != typeLookup_.end()) {
+                info = it->second;
+                factory = info->factory;
+            }
         }
 
         if (!factory) {
@@ -134,6 +140,7 @@ namespace ConditionEngine {
 
         // Cross-cutting fields that apply to all condition types
         result->forcePolled = json.value("forcePolled", false);
+        result->typeInfo = info;
         return result;
     }
 
@@ -511,6 +518,7 @@ namespace ConditionEngine {
         std::unique_lock lock(mutex_);
         const auto removed = std::erase_if(named_, [&](const auto& kv) { return kv.second.info.source == source; }) +
                              std::erase_if(namedValues_, [&](const auto& kv) { return kv.second->source == source; });
+        RebuildRefreshIndex();
         lock.unlock();
         if (removed) Availability::Get().Invalidate();
         return removed;
@@ -541,6 +549,11 @@ namespace ConditionEngine {
         return nullptr;
     }
 
+    bool Registry::IsEngineNamed(const std::string& key) const {
+        std::shared_lock lock(mutex_);
+        return named_.contains(key);
+    }
+
     void Registry::AddNamedResolver(NamedResolver resolver) {
         if (!resolver) return;
         std::unique_lock lock(mutex_);
@@ -560,13 +573,34 @@ namespace ConditionEngine {
                             definition->name, entry->source, definition->source);
         }
         entry = std::move(definition);
+        RebuildRefreshIndex();
         lock.unlock();
         Availability::Get().Invalidate();
+    }
+
+    void Registry::RebuildRefreshIndex() {
+        refreshIndex_.clear();
+        for (const auto& [key, def] : namedValues_) {
+            for (const auto& event : def->refreshOn) refreshIndex_[Lower(event)].push_back(key);
+        }
+    }
+
+    std::vector<std::shared_ptr<const NamedValueDef>> Registry::ValuesRefreshedBy(std::string_view eventName) const {
+        std::vector<std::shared_ptr<const NamedValueDef>> result;
+        std::shared_lock lock(mutex_);
+        if (refreshIndex_.empty()) return result;
+        auto it = refreshIndex_.find(Lower(std::string(eventName)));
+        if (it == refreshIndex_.end()) return result;
+        for (const auto& key : it->second) {
+            if (auto def = namedValues_.find(key); def != namedValues_.end()) result.push_back(def->second);
+        }
+        return result;
     }
 
     bool Registry::UnregisterNamedValue(const std::string& name) {
         std::unique_lock lock(mutex_);
         const bool removed = namedValues_.erase(Lower(name)) > 0;
+        if (removed) RebuildRefreshIndex();
         lock.unlock();
         if (removed) Availability::Get().Invalidate();
         return removed;

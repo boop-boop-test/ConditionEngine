@@ -1,11 +1,34 @@
 #include "ConditionEngine/Conditions/RuleReferenceCondition.h"
 #include "ConditionEngine/EvaluationContext.h"
+#include "ConditionEngine/Availability.h"
 #include "ConditionEngine/Registry.h"
 
 namespace ConditionEngine {
 
     RuleReferenceCondition::RuleReferenceCondition(const std::string& name, bool inv, const std::string& uuid)
         : ruleName(name), ruleUUID(uuid), inverted(inv) {}
+
+    std::shared_ptr<const Condition> RuleReferenceCondition::Resolve() const {
+        const auto revision = Availability::Get().Revision();
+        {
+            std::lock_guard lock(bindMutex_);
+            if (bound_ && boundRevision_ == revision) return bound_;
+        }
+        auto& registry = Registry::Get();
+        const std::string* matched = &GetKey();
+        auto named = registry.FindNamed(*matched);
+        if (!named && !ruleUUID.empty() && !ruleName.empty()) {
+            // UUID unknown to every resolver - fall back to the display name
+            matched = &ruleName;
+            named = registry.FindNamed(ruleName);
+        }
+        if (named && registry.IsEngineNamed(*matched)) {
+            std::lock_guard lock(bindMutex_);
+            bound_ = named;
+            boundRevision_ = revision;
+        }
+        return named;
+    }
 
     bool RuleReferenceCondition::Evaluate(const EvaluationContext& context) const {
         const std::string& key = GetKey();
@@ -21,18 +44,14 @@ namespace ConditionEngine {
             return false;
         }
 
-        auto named = Registry::Get().FindNamed(key);
-        if (!named && !ruleUUID.empty() && !ruleName.empty()) {
-            // UUID unknown to every resolver - fall back to the display name
-            named = Registry::Get().FindNamed(ruleName);
-        }
+        auto named = Resolve();
         if (!named) {
             SKSE::log::error("Rule not found for evaluation: '{}' (key: {})", ruleName, key);
             return false;
         }
 
         context.rulesInProgress.insert(key);
-        bool result = named->Evaluate(context);
+        bool result = named->EvaluateCounted(context);
         context.rulesInProgress.erase(key);
         context.ruleMemo[key] = result;
 
@@ -43,12 +62,11 @@ namespace ConditionEngine {
     TriResult RuleReferenceCondition::EvaluateTri(const EvaluationContext& context) const {
         const std::string& key = GetKey();
         if (context.rulesInProgress.count(key)) return TriResult::Of(false);
-        auto named = Registry::Get().FindNamed(key);
-        if (!named && !ruleUUID.empty() && !ruleName.empty()) named = Registry::Get().FindNamed(ruleName);
+        auto named = Resolve();
         if (!named) return TriResult::Of(false);
 
         context.rulesInProgress.insert(key);
-        auto r = named->EvaluateTri(context);
+        auto r = named->EvaluateTriCounted(context);
         context.rulesInProgress.erase(key);
         if (!r.Decided() || !inverted) return r;
         return TriResult::Of(r.state == TriState::False);

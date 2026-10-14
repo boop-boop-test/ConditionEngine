@@ -7,52 +7,53 @@ namespace ConditionEngine {
         : actor(actor) {}
 
     void EvaluationContext::UpdateFromGameState() {
-        snapshotted = false;
-        cache.clear();
+        taken = 0;
     }
 
-    void EvaluationContext::TakeSnapshot() const {
-        snapshotted = true;
-        if (!actor) return;
-
-        // Time information (doesn't require player)
-        auto calendar = RE::Calendar::GetSingleton();
-        if (calendar) {
-            currentTime = calendar->GetHour();
-            currentDay = calendar->GetDay();
-            currentMonth = calendar->GetMonth();
+    void EvaluationContext::TakeSnapshot(SnapshotGroup group) const {
+        taken |= group;
+        if (!actor) return;  // an actor-less context reads nothing (as before)
+        switch (group) {
+            case kTime:
+                // Time information (doesn't require the actor)
+                if (auto* calendar = RE::Calendar::GetSingleton()) {
+                    currentTime = calendar->GetHour();
+                    currentDay = calendar->GetDay();
+                    currentMonth = calendar->GetMonth();
+                }
+                break;
+            case kLocation:
+                // The actor's location, falling back to the cell's: some cells (especially
+                // interiors) do not set the actor's location directly
+                if (!actor) break;
+                currentLocation = actor->GetCurrentLocation();
+                if (!currentLocation) {
+                    if (auto* cell = actor->GetParentCell()) currentLocation = cell->GetLocation();
+                }
+                break;
+            case kWeather:
+                if (auto* sky = RE::Sky::GetSingleton(); sky && sky->currentWeather) currentWeather = sky->currentWeather;
+                break;
+            case kTemperature:
+                if (actor) temperature = Registry::Get().QueryTemperature(actor);
+                break;
+            case kActorState:
+                if (!actor) break;
+                if (auto* actorState = actor->AsActorState()) {
+                    isSwimming = actorState->IsSwimming();
+                } else {
+                    isSwimming = false;
+                }
+                isSleeping = IsActorSleeping(actor);
+                isMounted = actor->IsOnMount();
+                // In water is different from swimming - an actor can be in water but not swimming
+                isInWater = actor->IsInWater();
+                isInCombat = actor->IsInCombat();
+                break;
+            case kLoveScene:
+                if (actor) isInLoveScene = Registry::Get().QueryLoveScene(actor);
+                break;
         }
-
-        // Location - use the actor's location, fall back to the cell's location.
-        // Some cells (especially interiors) may not set the actor's location directly,
-        // but the cell itself has a location assigned.
-        currentLocation = actor->GetCurrentLocation();
-        if (!currentLocation) {
-            if (auto* cell = actor->GetParentCell()) {
-                currentLocation = cell->GetLocation();
-            }
-        }
-
-        auto sky = RE::Sky::GetSingleton();
-        if (sky && sky->currentWeather) {
-            currentWeather = sky->currentWeather;
-        }
-
-        auto& registry = Registry::Get();
-        temperature = registry.QueryTemperature(actor);
-
-        // Poll-based actor states
-        if (auto actorState = actor->AsActorState()) {
-            isSwimming = actorState->IsSwimming();
-        } else {
-            isSwimming = false;
-        }
-        isSleeping = IsActorSleeping(actor);
-        isMounted = actor->IsOnMount();
-        // In water is different from swimming - an actor can be in water but not swimming
-        isInWater = actor->IsInWater();
-        isInCombat = actor->IsInCombat();
-        isInLoveScene = registry.QueryLoveScene(actor);
     }
 
     bool IsActorSleeping(RE::Actor* actor) {

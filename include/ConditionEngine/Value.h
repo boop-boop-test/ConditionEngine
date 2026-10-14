@@ -24,14 +24,35 @@
 #include "ConditionEngine/Condition.h"
 #include "ConditionEngine/ValueResult.h"
 
+#include <atomic>
+
 namespace ConditionEngine {
+
+    struct AvailabilityStatus;
 
     class Value {
     public:
-        virtual ~Value() = default;
+        Value() = default;
+        Value(const Value&) = delete;
+        Value& operator=(const Value&) = delete;
+        virtual ~Value();
+
+        // Availability::CheckValue(*this), kept until the availability revision changes
+        AvailabilityStatus CheckAvailability() const;
 
         // Reads the value. Non-blocking: async nodes return their latest sample.
         virtual ValueResult Read(const EvaluationContext& context) const = 0;
+
+        // Read, timed per node type while Stats are enabled. Parents call this for children.
+        ValueResult ReadCounted(const EvaluationContext& context) const;
+
+        // Stats row (Stats::FixedSlot or the type's TypeInfo::statsSlot)
+        std::uint32_t statsSlot = 0;
+
+    private:
+        mutable std::atomic<detail::AvailabilityMemo*> availabilityMemo_{nullptr};
+
+    public:
 
         // Event dependency bits that can change the value
         virtual EventDependency GetEventDependencies() const = 0;
