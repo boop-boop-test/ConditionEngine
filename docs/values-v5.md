@@ -1,6 +1,8 @@
 # Values (API v5) — design draft
 
-Status: **built (steps 1-7), unit-tested, not yet run in game**. Requested by NTJH (issue 166). Open questions decided (see Decisions). README.md "Values (API v5)" documents the shipped API; this file is the design record.
+Status: **built (steps 1-7), unit-tested, not yet run in game**. Requested by NTJH (issue 166). Open questions decided (see Decisions). README.md "Values" documents the shipped API; this file is the design record. The C API has since been
+consolidated into a single prerelease version 1: `EvaluateValueEx` is `EvaluateValue`, `ReadValueWatchReason` folded
+into `ReadValueWatch`, and `RegisterValueTypeEx` / `WithReason` became `RegisterValueType`.
 
 ## Goal
 

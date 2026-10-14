@@ -17,8 +17,8 @@ It was extracted from DressCode and has no DressCode dependencies.
   - **Every second, cheaply:** compare the cell, location, game minute, weather and actor flags, and re-check only the watches that depend on what changed. Game events do the same: equip, inventory, magic effects, combat, cell load, sleep and wait, menus, and game load.
   - **A full poll every 10 seconds:** for state with no change signal. The interval is set in `ConditionEngine.ini` (`fPollIntervalSeconds`) or with `SetPollInterval`, and each watch can override it.
 - **Self-describing types**: every type publishes a schema (its fields, value types, labels, defaults, allowed values and category). The catalog (`ConditionEngine_GetCatalog`, Papyrus `GetCatalog`) and a generated JSON Schema (`ConditionEngine_GetJsonSchema`) let editors and other mods offer any condition without knowing how it works.
-- **Values** (API v5): the number a numeric type compares, read on its own (`ActorValue(Health, usePercentage=true)`, `Level`, `Game(GetLevel)`, `PapyrusCall(...)`), with arithmetic (`$hunger * (1 - $light)`, `clamp`, `min`, `max`, `abs`, `lerp`). Named values (`$name`) come from presets, plugins or scripts, can be pushed from Papyrus (`SetValue`), and can be watched with a non-blocking per-frame read. Conditions compare them: `$vampire_hunger > 80`.
-- **Extensible**: other plugins can register their own condition types, with schemas, from C++ (`TypeBuilder`) or through the C API (`ConditionEngine_RegisterTypeEx`). Those types then appear in DressCode's editors automatically.
+- **Values**: the number a numeric type compares, read on its own (`ActorValue(Health, usePercentage=true)`, `Level`, `Game(GetLevel)`, `PapyrusCall(...)`), with arithmetic (`$hunger * (1 - $light)`, `clamp`, `min`, `max`, `abs`, `lerp`). Named values (`$name`) come from presets, plugins or scripts, can be pushed from Papyrus (`SetValue`), and can be watched with a non-blocking per-frame read. Conditions compare them: `$vampire_hunger > 80`.
+- **Extensible**: other plugins can register their own condition types, with schemas, from C++ (`TypeBuilder`) or through the C API (`ConditionEngine_RegisterType`). Those types then appear in DressCode's editors automatically.
 
 ## Build modes
 
@@ -40,16 +40,18 @@ char err[256];
 CE_Handle h = ConditionEngine_Compile("@IsNight && Weather(Rainy)", err, sizeof err);
 bool raining = ConditionEngine_Evaluate(h, actor) == 1;
 
+CE_WatchOptions options{sizeof options};
+options.fireImmediately = 1;
 ConditionEngine_Watch(h, actor, [](CE_WatchHandle, void* a, int32_t result, void*) {
     // main thread, only on change
-}, nullptr, /*fireImmediately*/ 1);
+}, nullptr, &options);
 ```
 
-For per-watch settings (API v2), use `CE_WatchOptions` with `ConditionEngine_WatchEx`. It takes a poll interval (`CE_POLL_DEFAULT`, `CE_POLL_NEVER` or a number of milliseconds) and extra triggers, such as `CE_DEP_LOCATION` to re-check on every cell transition. `ConditionEngine_Refresh(watch)` forces a check.
+The API is version 1 (`ConditionEngine_GetAPIVersion`) and prerelease: it may still change until the first release. `CE_WatchOptions` takes a poll interval (`CE_POLL_DEFAULT`, `CE_POLL_NEVER` or a number of milliseconds) and extra triggers, such as `CE_DEP_LOCATION` to re-check on every cell transition. `ConditionEngine_Refresh(watch)` forces a check.
 
-Custom types are registered with `ConditionEngine_RegisterType("MyMod_IsCursed", fn, ud, CE_DEP_POLLED, "level", nullptr)`. After that, `MyMod_IsCursed(3)` works in any expression, preset or DressCode rule.
+Custom types are registered with a schema: `ConditionEngine_RegisterType(R"({"name": "MyMod_IsCursed", "source": "MyMod", "fields": [{"key": "level", "type": "int"}]})", fn, ud, CE_DEP_POLLED, err, sizeof err)`. After that, `MyMod_IsCursed(3)` works in any expression, preset or DressCode rule.
 
-## Values (API v5)
+## Values
 
 A value is a number read from the game: any numeric type without its comparison, a named value, a condition read as 1 / 0, or arithmetic over those.
 
@@ -69,20 +71,20 @@ ConditionEngine_ReadValueWatch(w, &s);           // any thread, never blocks: s.
 - **Named values** resolve by name on every read, so redefinitions reach existing handles and watches. `ConditionEngine_RegisterNamedValue`, presets (`"values"`), or Papyrus `RegisterNamedValue`.
 - **Pushed values**: `ConditionEngine_SetValue(actor, name, value, timeoutSeconds)` / `SetGlobalValue`, or Papyrus `SetValue`. Pushing an undeclared name declares it. Pushes are never saved; every load starts clean.
 - **PapyrusCall** reads a number returned by a Papyrus function with the actor as its argument, asynchronously: `PapyrusCall(SeverActionsNative, Native_Survival_GetHunger, interval=2)`, or a method on a form's script with `form="0xD62|SeverActions.esp"`. Reads return the latest result and dispatch at most one call per function and actor.
-- **External value types**: `ConditionEngine_RegisterValueTypeEx(schema + "value": {unit, range}, fn, ...)`. The type reads as a value and compares as a condition (`MyMod_Fear > 0.5`). Signal changes with `ConditionEngine_NotifyEvent(CE_DEP_VALUE, actor)`.
-- **Reasons**: `ConditionEngine_ReadValueWatchReason` / `EvaluateValueEx` return why a sample is not OK; external types report theirs through `ConditionEngine_RegisterValueTypeWithReason`. Named values can require native DLLs (`"requiresDlls": ["SomeNative.dll"]`).
+- **External value types**: `ConditionEngine_RegisterValueType(schema + "value": {unit, range}, fn, ...)`. The type reads as a value and compares as a condition (`MyMod_Fear > 0.5`). Signal changes with `ConditionEngine_NotifyEvent(CE_DEP_VALUE, actor)`.
+- **Reasons**: `ConditionEngine_ReadValueWatch` / `EvaluateValue` also return why a sample is not OK; external types report theirs through their callback's reason buffer. Named values can require native DLLs (`"requiresDlls": ["SomeNative.dll"]`).
 - **Created actors**: watches on created references (`0xFF...`) stop at the next game load, since that FormID may name a different actor in another save. Value watches then read Unavailable; watch again after loading.
 - **Three-valued enabledWhen**: while an `enabledWhen` condition cannot be decided (an async part has no result yet) the value reads `PENDING` with what it waits for, not "not enabled". `false && pending` is still decided.
 
-## Catalog organisation (API v6)
+## Catalog organisation
 
 - **Categories are topical and shared**: `survival` means survival whoever registered it. `ConditionEngine_RegisterCategory({"id", "label", "parent", "order", "icon", "description"}, owner, ...)`, or `"categories": [...]` in a preset. Registering an existing id is reuse: the first registrant keeps the label, later ones only fill in a missing description, icon or parent. `parent` makes a tree; cycles are refused.
 - **Nothing is dropped or regrouped**: an item that names a category nobody registered gets that category created at the top level, labelled from its id (`relationships` becomes "Relationships").
 - **Origin**: every item carries `source` (built-ins: `ConditionEngine`) and `sourceLabel`; `ConditionEngine_RegisterSource("NoTalkJustHands", "No Talk Just Hands")` or `"sources": {...}` in a preset sets the label. Types registered without a `"source"` take the calling module's file name, with a warning. **Pickers show the origin next to each item**, e.g. "Vampire hunger · SeverActions".
 - **Offer** (metadata, never enforced): `everywhere` (default), `owner` (offered only to pickers asking as the owner), `nowhere` (expression-only; `hidden` means the same). Everything compiles and evaluates for everyone.
 - **Tags**: free `tags` plus automatic ones (`condition`, `value`, `per-actor`, `global`, `pushed`, `async`, `requires-plugin`).
-- **Named values and conditions** take `category`, `icon`, `description`, `offer`, `tags` and `owner` in their definitions (presets, `RegisterNamedValue`, `ConditionEngine_RegisterNamedEx`).
-- The catalog root lists `categories` and `sources: [{id, label, count}]`. It is small, so pickers fetch it once and filter by category, source, tags and text themselves. `ConditionEngine_GetCatalogEx({"for": "<owner>", "include": [...], "offered": true})` resolves owner-only items for a picker; `offered: false` is "show all".
+- **Named values and conditions** take `category`, `icon`, `description`, `offer`, `tags` and `owner` in their definitions (presets, `RegisterNamedValue`, `ConditionEngine_RegisterNamed`).
+- The catalog root lists `categories` and `sources: [{id, label, count}]`. It is small, so pickers fetch it once and filter by category, source, tags and text themselves. `ConditionEngine_GetCatalog({"for": "<owner>", "include": [...], "offered": true}, ...)` resolves owner-only items for a picker; `offered: false` is "show all".
 
 ## Papyrus
 
@@ -139,12 +141,12 @@ value    := number | "string" | 'string' | word | [list] | ${param}
 Positional arguments fill each type's declared fields in order, and a trailing comparison with a literal sets its compare field. For example, `ActorValue(Health, usePercentage=true) < 30` is the same as `{"type":"ActorValue","actorValue":"Health","usePercentage":true,"value":30,"operator":"<"}`. Any other comparison (arithmetic, `$name`, a numeric type on the right) becomes a `Compare` condition over two values. Where a condition is expected a bare value means `!= 0`; where a value is expected a condition reads 1 / 0. Division by zero reads 0.
 
 
-## Integration availability (API v4)
+## Integration availability
 
 Availability is separate from boolean matching and configuration validation. Types remain registered
 when their dependencies are missing, so saved expressions still compile and round-trip.
 
-Declare `requiresPlugins: ["SomeMod.esp"]` in a RegisterTypeEx schema, or use
+Declare `requiresPlugins: ["SomeMod.esp"]` in a RegisterType schema, or use
 `TypeBuilder::RequiresPlugins` in C++. Full and light plugins are snapshotted after data loads and on
 new-game/save-load events. Form/formList fields using portable `0x...|Plugin.esp` keys also require
 their owner plugin. `IsPluginLoaded("SomeMod.esp")` itself remains available; it is a presence test.

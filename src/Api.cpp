@@ -54,18 +54,6 @@ namespace {
         return needed;
     }
 
-    std::vector<std::string> SplitCsv(const char* csv) {
-        std::vector<std::string> result;
-        if (!csv) return result;
-        std::istringstream ss(csv);
-        std::string token;
-        while (std::getline(ss, token, ',')) {
-            auto start = token.find_first_not_of(" \t");
-            auto end = token.find_last_not_of(" \t");
-            if (start != std::string::npos) result.push_back(token.substr(start, end - start + 1));
-        }
-        return result;
-    }
 
     bool Evaluate(const Condition& condition, RE::Actor* actor, void* userData = nullptr) {
         EvaluationContext context(actor);
@@ -338,21 +326,7 @@ CONDITIONENGINE_API uint32_t ConditionEngine_Validate(CE_Handle handle, char* bu
 
 // ── Named conditions ─────────────────────────────────────────────────────────
 
-CONDITIONENGINE_API CE_Result ConditionEngine_RegisterNamed(const char* id, const char* source, const char* owner,
-                                                            char* errorBuf, uint32_t errorBufSize) {
-    if (!id || !*id || !source) return CE_ERR_INVALID_ARG;
-    std::string error;
-    auto condition = Expression::CompileAny(source, &error);
-    if (!condition) {
-        WriteString(error, errorBuf, errorBufSize);
-        return CE_ERR_PARSE;
-    }
-    Registry::Get().RegisterNamed(id, std::shared_ptr<const Condition>(std::move(condition)), owner ? owner : "",
-                                  source);
-    return CE_OK;
-}
-
-CONDITIONENGINE_API CE_Result ConditionEngine_RegisterNamedEx(const char* id, const char* definition, const char* owner,
+CONDITIONENGINE_API CE_Result ConditionEngine_RegisterNamed(const char* id, const char* definition, const char* owner,
                                                               char* errorBuf, uint32_t errorBufSize) {
     if (!id || !*id || !definition) return CE_ERR_INVALID_ARG;
     const std::string text = definition;
@@ -455,31 +429,7 @@ CONDITIONENGINE_API CE_Result ConditionEngine_AddNamedResolver(CE_NamedLookupFn 
 
 // ── Custom condition types ───────────────────────────────────────────────────
 
-CONDITIONENGINE_API CE_Result ConditionEngine_RegisterType(const char* name, CE_CustomEvalFn fn, void* userData,
-                                                           uint32_t dependencies, const char* positionalCsv,
-                                                           const char* compareField) {
-    if (!name || !*name || !fn) return CE_ERR_INVALID_ARG;
-
-    TypeInfo info;
-    info.name = name;
-    info.source = ModuleNameAt(_ReturnAddress());
-    info.positional = SplitCsv(positionalCsv);
-    info.compareField = compareField ? compareField : "";
-    const auto deps = static_cast<EventDependency>(dependencies);
-    const std::string typeName = name;
-    info.factory = [fn, userData, deps, typeName](const json& j) -> std::unique_ptr<Condition> {
-        auto params = std::make_shared<const std::string>(j.dump());
-        return std::make_unique<CallbackCondition>(
-            typeName,
-            [fn, userData, params](const EvaluationContext& context) {
-                return fn(context.GetActor(), params->c_str(), userData) != 0;
-            },
-            deps, j);
-    };
-    return Registry::Get().RegisterType(std::move(info)) ? CE_OK : CE_ERR_ALREADY_EXISTS;
-}
-
-CONDITIONENGINE_API CE_Result ConditionEngine_RegisterTypeEx(const char* schemaJson, CE_CustomEvalFn fn, void* userData,
+CONDITIONENGINE_API CE_Result ConditionEngine_RegisterType(const char* schemaJson, CE_CustomEvalFn fn, void* userData,
                                                              uint32_t dependencies, char* errorBuf,
                                                              uint32_t errorBufSize) {
     if (!schemaJson || !fn) return CE_ERR_INVALID_ARG;
@@ -512,8 +462,8 @@ CONDITIONENGINE_API CE_Result ConditionEngine_RegisterTypeEx(const char* schemaJ
 
 // ── Catalog ──────────────────────────────────────────────────────────────────
 
-CONDITIONENGINE_API uint32_t ConditionEngine_GetCatalogEx(const char* filterJson, char* buf, uint32_t bufSize) {
-    json filter = json::object();
+CONDITIONENGINE_API uint32_t ConditionEngine_GetCatalog(const char* filterJson, char* buf, uint32_t bufSize) {
+    json filter = json{{"offered", false}};
     if (filterJson && *filterJson) {
         try {
             filter = json::parse(filterJson);
@@ -559,10 +509,6 @@ CONDITIONENGINE_API void ConditionEngine_RegisterSource(const char* id, const ch
     if (id && *id) Registry::Get().RegisterSource(id, label ? label : "");
 }
 
-CONDITIONENGINE_API uint32_t ConditionEngine_GetCatalog(char* buf, uint32_t bufSize) {
-    return WriteString(Registry::Get().GetCatalog().dump(), buf, bufSize);
-}
-
 CONDITIONENGINE_API uint32_t ConditionEngine_GetJsonSchema(char* buf, uint32_t bufSize) {
     return WriteString(Registry::Get().GetJsonSchema().dump(), buf, bufSize);
 }
@@ -590,21 +536,11 @@ CONDITIONENGINE_API uint64_t ConditionEngine_GetAvailabilityRevision(void) { ret
 
 // ── Watches ──────────────────────────────────────────────────────────────────
 
-CONDITIONENGINE_API CE_WatchHandle ConditionEngine_Watch(CE_Handle handle, void* actor, CE_WatchFn fn, void* userData,
-                                                         int32_t fireImmediately) {
-    auto condition = Lookup(handle);
-    if (!condition || !fn) return 0;
-    return Watcher::Get().Watch(
-        condition, static_cast<RE::Actor*>(actor),
-        [fn, userData](WatchId id, RE::Actor* target, bool result) { fn(id, target, result ? 1 : 0, userData); },
-        fireImmediately != 0);
-}
-
 CONDITIONENGINE_API void ConditionEngine_Unwatch(CE_WatchHandle watch) {
     Watcher::Get().Unwatch(watch);
 }
 
-CONDITIONENGINE_API CE_WatchHandle ConditionEngine_WatchEx(CE_Handle handle, void* actor, CE_WatchFn fn, void* userData,
+CONDITIONENGINE_API CE_WatchHandle ConditionEngine_Watch(CE_Handle handle, void* actor, CE_WatchFn fn, void* userData,
                                                            const CE_WatchOptions* options) {
     auto condition = Lookup(handle);
     if (!condition || !fn) return 0;
@@ -680,7 +616,7 @@ CONDITIONENGINE_API void ConditionEngine_ReleaseValue(CE_ValueHandle value) {
     g_values.erase(value);
 }
 
-CONDITIONENGINE_API CE_Result ConditionEngine_EvaluateValueEx(CE_ValueHandle handle, void* actor, CE_ValueSample* out,
+CONDITIONENGINE_API CE_Result ConditionEngine_EvaluateValue(CE_ValueHandle handle, void* actor, CE_ValueSample* out,
                                                               char* reasonBuf, uint32_t reasonBufSize) {
     auto value = LookupValue(handle);
     if (!value) {
@@ -697,10 +633,6 @@ CONDITIONENGINE_API CE_Result ConditionEngine_EvaluateValueEx(CE_ValueHandle han
     WriteSample(sample, out);
     WriteString(result.Ok() ? std::string{} : result.reason, reasonBuf, reasonBufSize);
     return CE_OK;
-}
-
-CONDITIONENGINE_API CE_Result ConditionEngine_EvaluateValue(CE_ValueHandle handle, void* actor, CE_ValueSample* out) {
-    return ConditionEngine_EvaluateValueEx(handle, actor, out, nullptr, 0);
 }
 
 CONDITIONENGINE_API uint32_t ConditionEngine_GetValueDependencies(CE_ValueHandle handle) {
@@ -831,20 +763,16 @@ CONDITIONENGINE_API CE_WatchHandle ConditionEngine_WatchValue(CE_ValueHandle han
     return Watcher::Get().WatchValue(std::move(value), static_cast<RE::Actor*>(actor), std::move(callback), watchOptions);
 }
 
-CONDITIONENGINE_API int32_t ConditionEngine_ReadValueWatch(CE_WatchHandle watch, CE_ValueSample* out) {
-    ValueSample sample;
-    if (!Watcher::Get().ReadValueWatch(watch, sample)) return 0;
-    WriteSample(sample, out);
-    return 1;
-}
-
-CONDITIONENGINE_API uint32_t ConditionEngine_ReadValueWatchReason(CE_WatchHandle watch, char* buf, uint32_t bufSize) {
+CONDITIONENGINE_API int32_t ConditionEngine_ReadValueWatch(CE_WatchHandle watch, CE_ValueSample* out, char* reasonBuf,
+                                                           uint32_t reasonBufSize) {
     ValueSample sample;
     if (!Watcher::Get().ReadValueWatch(watch, sample)) {
-        WriteString({}, buf, bufSize);
+        WriteString({}, reasonBuf, reasonBufSize);
         return 0;
     }
-    return WriteString(sample.status == ValueStatus::Ok ? std::string{} : sample.reason, buf, bufSize);
+    WriteSample(sample, out);
+    WriteString(sample.status == ValueStatus::Ok ? std::string{} : sample.reason, reasonBuf, reasonBufSize);
+    return 1;
 }
 
 CONDITIONENGINE_API int32_t ConditionEngine_RefreshValueWatch(CE_WatchHandle watch, CE_ValueSample* out) {
@@ -854,23 +782,9 @@ CONDITIONENGINE_API int32_t ConditionEngine_RefreshValueWatch(CE_WatchHandle wat
     return 1;
 }
 
-CONDITIONENGINE_API CE_Result ConditionEngine_RegisterValueTypeEx(const char* schemaJson, CE_CustomValueFn fn,
-                                                                  void* userData, uint32_t dependencies,
-                                                                  char* errorBuf, uint32_t errorBufSize) {
-    if (!schemaJson || !fn) return CE_ERR_INVALID_ARG;
-    return RegisterValueType(
-        schemaJson,
-        [fn, userData](void* actor, const char* params) {
-            double out = 0.0;
-            const auto status = fn(actor, params, &out, userData);
-            return FromHostStatus(status, out, {});
-        },
-        dependencies, errorBuf, errorBufSize, ModuleNameAt(_ReturnAddress()));
-}
-
-CONDITIONENGINE_API CE_Result ConditionEngine_RegisterValueTypeWithReason(const char* schemaJson, CE_CustomValueReasonFn fn,
-                                                                          void* userData, uint32_t dependencies,
-                                                                          char* errorBuf, uint32_t errorBufSize) {
+CONDITIONENGINE_API CE_Result ConditionEngine_RegisterValueType(const char* schemaJson, CE_CustomValueFn fn, void* userData,
+                                                                uint32_t dependencies, char* errorBuf,
+                                                                uint32_t errorBufSize) {
     if (!schemaJson || !fn) return CE_ERR_INVALID_ARG;
     return RegisterValueType(
         schemaJson,
