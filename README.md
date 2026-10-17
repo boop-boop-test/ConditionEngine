@@ -20,6 +20,31 @@ It was extracted from DressCode and has no DressCode dependencies.
 - **Values**: the number a numeric type compares, read on its own (`ActorValue(Health, usePercentage=true)`, `Level`, `Game(GetLevel)`, `PapyrusCall(...)`), with arithmetic (`$hunger * (1 - $light)`, `clamp`, `min`, `max`, `abs`, `lerp`). Named values (`$name`) come from presets, plugins or scripts, can be pushed from Papyrus (`SetValue`), and can be watched with a non-blocking per-frame read. Conditions compare them: `$vampire_hunger > 80`.
 - **Extensible**: other plugins can register their own condition types, with schemas, from C++ (`TypeBuilder`) or through the C API (`ConditionEngine_RegisterType`). Those types then appear in DressCode's editors automatically.
 
+## Requirements (players)
+
+- **Skyrim SE, AE or VR.** Built with CommonLibVR NG (alandtse/CommonLibVR, `ng` branch): one DLL for the three
+  runtimes. Tested in game on AE 1.6.1170; SE 1.5.97 and VR are untested.
+- **SKSE** for your game build and **Address Library for SKSE Plugins** (the VR Address Library on VR).
+- Optional: **PapyrusUtil** for the `StorageUtil` values; `Data/SKSE/Plugins/ConditionEngine.ini` and data-only presets
+  in `Data/SKSE/Plugins/ConditionEngine/`.
+- Usually installed by a mod that bundles it (DressCode, No Talk Just Hands). No Talk Just Hands uses a copy that is
+  already loaded or installed standalone (`Data/SKSE/Plugins/ConditionEngine.dll`) before its own bundled one.
+
+## Building (developers)
+
+- Windows x64, **Visual Studio 2022** with the "Desktop development with C++" workload (C++23, MSVC; clang-cl presets
+  exist but are not used), **CMake 3.21+** and **Ninja** (both ship with VS 2022's C++ CMake tools).
+- **vcpkg** with `VCPKG_ROOT` set: the presets use its toolchain, the `x64-windows-skse` triplet from `cmake/`, and
+  `vcpkg-configuration.json` adds the colorglass registry (skse and script-source ports).
+- **CommonLibVR-ng**: `extern/CommonLibVR-ng`, or the parent DressCode checkout's `../extern/CommonLibVR-ng` (the
+  fallback when this repo sits inside SkyrimOutfitEquipmentSystemNG).
+- Build: `cmake --preset build-release-msvc`, then `cmake --build build/release-msvc`; the post-build step copies the
+  DLL to `contrib/Distribution/PluginRelease/` (No Talk Just Hands bundles it from there, `CONDITIONENGINE_DIST`).
+- Papyrus (`ConditionEngine.psc`): `Release.ppj` imports the SKSE / Skyrim script sources from the parent DressCode
+  build (`../build/release-msvc/vcpkg_installed/x64-windows-skse/contrib/papyrus`); compile with pyro.
+- Tests: `condition-engine-tests` (built when this is the top-level project); no game needed.
+- Licence: `vcpkg.json` declares Apache-2.0, but there is no `LICENSE` file yet; bundling mods need one beside the DLL.
+
 ## Build modes
 
 | Context | Output | Notes |
