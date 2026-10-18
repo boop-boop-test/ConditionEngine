@@ -24,7 +24,7 @@ It was extracted from DressCode and has no DressCode dependencies.
 
 | Context | Output | Notes |
 |---|---|---|
-| Built on its own (`cmake --preset build-release-msvc`) | `ConditionEngine.dll`, an SKSE plugin | Exports the C API and registers the Papyrus natives |
+| Built on its own (`cmake --preset build-release-msvc`) | `ConditionEngine.dll`, an SKSE plugin | Exports the C API, registers the Papyrus natives and, with OAR installed, the OAR conditions |
 | `add_subdirectory(ConditionEngine)` from a host | `condition-engine-lib`, a static library | The host uses the C++ API directly (`ConditionEngine/ConditionEngine.h`) |
 
 When building on its own, CommonLib is taken from `extern/CommonLibVR-ng`. If that is missing, it falls back to the parent checkout's `../extern/CommonLibVR-ng`.
@@ -107,6 +107,36 @@ In game, `ce` in the console (it takes over the unused vanilla `TestCode` comman
 - `ce stats [on|off|reset]`: watches, tick times, Papyrus calls and the costliest types (`on` times evaluations)
 
 Quote an expression that has commas: `ce eval "Time(20, 6) && $hunger > 50"`.
+
+## Open Animation Replacer
+
+With Open Animation Replacer (OAR) installed, `ConditionEngine.dll` adds two OAR conditions, usable in any submod's `config.json` and in OAR's in-game editor:
+
+- `ConditionEngine`: the text `Preset` names a named condition (a preset, or one registered by a script, another plugin or DressCode). A leading `@` is optional.
+- `ConditionEngineExpression`: the text `Expression` is any expression, compiled once per distinct text.
+
+```json
+{
+    "condition": "ConditionEngine",
+    "requiredPlugin": "ConditionEngine",
+    "requiredVersion": "1.1.0.0",
+    "Preset": "NTJH.Talk.Guarded"
+}
+```
+
+```json
+{
+    "condition": "ConditionEngineExpression",
+    "requiredPlugin": "ConditionEngine",
+    "requiredVersion": "1.1.0.0",
+    "Expression": "@IsNight && !Sneaking"
+}
+```
+
+- The subject is the actor OAR evaluates for; non-actors read false. `negated` and `disabled` work as for any OAR condition.
+- A missing preset, an invalid expression, or a condition whose plugins or integrations are unavailable reads false; OAR's editor shows why next to the condition.
+- OAR evaluates conditions inside the animation update, mostly on worker threads, and ConditionEngine evaluates on the main thread. Off the main thread a condition therefore reads the latest result of a watch ConditionEngine keeps for that text and actor (re-checked on its events and polls, like any watch). The first evaluation for an actor reads false and starts the watch; pairs not evaluated for a minute are dropped.
+- Without OAR nothing registers; the log says so in one line.
 
 ## Catalog organisation
 

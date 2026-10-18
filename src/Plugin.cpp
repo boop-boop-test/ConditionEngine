@@ -2,6 +2,7 @@
 /// @brief SKSE entry point for the standalone ConditionEngine.dll.
 
 #include "Console.h"
+#include "OarConditions.h"
 #include "Papyrus.h"
 
 #include "ConditionEngine/Presets.h"
@@ -30,6 +31,9 @@ namespace {
 
     void OnMessage(SKSE::MessagingInterface::Message* message) {
         switch (message->type) {
+            case SKSE::MessagingInterface::kPostLoad:
+                ConditionEngine::OarConditions::Register();
+                break;
             case SKSE::MessagingInterface::kDataLoaded: {
                 ConditionEngine::Availability::Get().RefreshLoadedPlugins();
                 const auto settings = ConditionEngine::LoadSettings(ConditionEngine::GetDefaultSettingsPath());
@@ -47,6 +51,7 @@ namespace {
             case SKSE::MessagingInterface::kPreLoadGame:
             case SKSE::MessagingInterface::kNewGame:
                 ConditionEngine::Availability::Get().RefreshLoadedPlugins();
+                ConditionEngine::OarConditions::OnGameLoad();
                 ConditionEngine::Papyrus::ClearScriptState();
                 ConditionEngine::PushedValues::Get().ClearAll();  // pushed values are never saved
                 ConditionEngine::PapyrusCalls::Get().ClearAll();

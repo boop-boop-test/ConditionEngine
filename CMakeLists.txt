@@ -155,10 +155,13 @@ set(CONDITION_ENGINE_SOURCES
     src/Values/RefreshOn.cpp
 )
 
-# DLL-only: exported C API, Papyrus natives and the SKSE plugin entry point.
+# DLL-only: exported C API, Papyrus natives, Open Animation Replacer conditions and the SKSE plugin entry point.
 set(CONDITION_ENGINE_DLL_SOURCES
     src/Api.cpp
     src/Console.cpp
+    src/OarConditions.cpp
+    src/OAR/OpenAnimationReplacer-ConditionTypes.cpp
+    src/OAR/OpenAnimationReplacerAPI-Conditions.cpp
     src/Papyrus.cpp
     src/Plugin.cpp
 )
