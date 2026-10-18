@@ -22,12 +22,33 @@ string(CONCAT MSVC_RUNTIME_LIBRARY_STR
 # CommonLibSSE: when consumed by DressCode, the parent already built this.
 # Standalone builds use extern/CommonLibVR-ng, falling back to a sibling checkout
 # in the parent repository so a second clone is not required.
+###############################################################################
+# Release DLLs carry no path of the build machine: __FILE__ and std::source_location (spdlog, CommonLib's logging and
+# asserts) are relative to this repo and to CommonLib's parent folder, and the debug directory names a PDB by file name
+# only. Directory scope and before CommonLib is added, so its objects get it too. Standalone builds only (a parent
+# that links the static library decides for its own build). /pathmap would also need /experimental:deterministic.
+###############################################################################
+set(CONDITIONENGINE_TRIM_PATHS OFF)
+if(PROJECT_IS_TOP_LEVEL AND CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+    set(CONDITIONENGINE_TRIM_PATHS ON)
+    add_compile_options("$<$<NOT:$<CONFIG:Debug>>:/d1trimfile:${CMAKE_CURRENT_SOURCE_DIR}/>")
+    add_link_options("$<$<NOT:$<CONFIG:Debug>>:/PDBALTPATH:%_PDB%>")
+endif()
+
 if(NOT TARGET CommonLibSSE::CommonLibSSE)
     set(CONDITIONENGINE_COMMONLIB_DIR "${CMAKE_CURRENT_SOURCE_DIR}/extern/CommonLibVR-ng"
         CACHE PATH "Path to a CommonLibVR-ng checkout")
     if(NOT EXISTS "${CONDITIONENGINE_COMMONLIB_DIR}/cmake/CommonLibSSE.cmake")
         set(CONDITIONENGINE_COMMONLIB_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../extern/CommonLibVR-ng"
             CACHE PATH "Path to a CommonLibVR-ng checkout" FORCE)
+    endif()
+    if(CONDITIONENGINE_TRIM_PATHS)
+        cmake_path(IS_PREFIX CMAKE_CURRENT_SOURCE_DIR "${CONDITIONENGINE_COMMONLIB_DIR}" NORMALIZE _ce_commonlib_inside)
+        if(NOT _ce_commonlib_inside)
+            cmake_path(GET CONDITIONENGINE_COMMONLIB_DIR PARENT_PATH _ce_commonlib_parent)
+            cmake_path(ABSOLUTE_PATH _ce_commonlib_parent NORMALIZE)
+            add_compile_options("$<$<NOT:$<CONFIG:Debug>>:/d1trimfile:${_ce_commonlib_parent}/>")
+        endif()
     endif()
     set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
     include("${CONDITIONENGINE_COMMONLIB_DIR}/cmake/CommonLibSSE.cmake")
