@@ -144,7 +144,7 @@ With Open Animation Replacer (OAR) installed, `ConditionEngine.dll` adds two OAR
 {
     "condition": "ConditionEngine",
     "requiredPlugin": "ConditionEngine",
-    "requiredVersion": "1.1.0.0",
+    "requiredVersion": "1.2.0.0",
     "Preset": "NTJH.Talk.Guarded"
 }
 ```
@@ -153,7 +153,7 @@ With Open Animation Replacer (OAR) installed, `ConditionEngine.dll` adds two OAR
 {
     "condition": "ConditionEngineExpression",
     "requiredPlugin": "ConditionEngine",
-    "requiredVersion": "1.1.0.0",
+    "requiredVersion": "1.2.0.0",
     "Expression": "@IsNight && !Sneaking"
 }
 ```
