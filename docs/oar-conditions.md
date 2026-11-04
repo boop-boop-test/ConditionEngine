@@ -22,7 +22,7 @@ and use it in the submod's `config.json`:
 {
     "condition": "ConditionEngine",
     "requiredPlugin": "ConditionEngine",
-    "requiredVersion": "1.1.0.0",
+    "requiredVersion": "1.2.0.0",
     "Preset": "MyMod.Guarded"
 }
 ```
@@ -33,7 +33,7 @@ and use it in the submod's `config.json`:
 {
     "condition": "ConditionEngineExpression",
     "requiredPlugin": "ConditionEngine",
-    "requiredVersion": "1.1.0.0",
+    "requiredVersion": "1.2.0.0",
     "Expression": "@IsNight && !Sneaking"
 }
 ```
@@ -48,5 +48,7 @@ and use it in the submod's `config.json`:
   main thread, so OAR reads the latest result of a watch ConditionEngine keeps for that text and actor. The first
   evaluation for an actor reads false and starts the watch; pairs not evaluated for a minute are dropped.
 - Without OAR nothing registers, and the log says so in one line.
+
+Configs need ConditionEngine 1.2.0 or later, the first release with the OAR conditions.
 
 Use `ce eval <expression>` in the console to check what an expression reads for the selected actor.
