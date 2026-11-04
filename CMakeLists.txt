@@ -171,7 +171,7 @@ set(CONDITION_ENGINE_DLL_SOURCES
 if(PROJECT_IS_TOP_LEVEL)
     add_commonlibsse_plugin(condition-engine-lib
         NAME "ConditionEngine"
-        AUTHOR "DressCode"
+        AUTHOR "boop-boop-test"
         SOURCES ${CONDITION_ENGINE_HEADERS} ${CONDITION_ENGINE_SOURCES} ${CONDITION_ENGINE_DLL_SOURCES})
     target_compile_definitions(condition-engine-lib PRIVATE CONDITIONENGINE_EXPORTS)
     set_target_properties(condition-engine-lib PROPERTIES OUTPUT_NAME "ConditionEngine")
