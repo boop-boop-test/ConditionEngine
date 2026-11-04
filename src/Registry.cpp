@@ -474,7 +474,7 @@ namespace ConditionEngine {
 
         return {
             {"$schema", "http://json-schema.org/draft-07/schema#"},
-            {"$id", "https://dresscode.mod/schemas/condition.schema.json"},
+            {"$id", "https://github.com/boop-boop-test/ConditionEngine/schemas/condition.schema.json"},
             {"title", "Condition"},
             {"description", "A ConditionEngine condition. Generated from the type registry - do not edit by hand."},
             {"type", "object"},
