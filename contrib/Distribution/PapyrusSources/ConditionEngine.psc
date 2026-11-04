@@ -65,6 +65,12 @@ Float    Function GetPollInterval() Global Native
 ; GetValue is latent (waits one frame). An unavailable value returns its fallback, or 0.
 Float    Function GetValue(Actor akActor, String asNameOrExpr) Global Native
 
+; Which source answered a combined value for the actor, e.g. GetValueSource(akActor, "hunger")
+; returns "sunhelm_hunger" or "lastseed_hunger"; "" when no source is available. Latent.
+; The built-in survival values: $hunger, $fatigue, $cold (0-100, 25 / 50 / 75 = mild /
+; moderate / severe), $hunger_stage etc. (0-3) and @HungerMild ... @ColdSevere.
+String   Function GetValueSource(Actor akActor, String asNameOrExpr) Global Native
+
 ; Pushed values: set a named value from a script (e.g. a SkyrimNet action). Pushing a
 ; name nobody declared declares it. afTimeoutSeconds 0 = the value's default timeout
 ; (none when it has none); afterwards it reverts to its expression or default.

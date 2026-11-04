@@ -16,7 +16,7 @@
 //   atom     := "(" expr ")" | "true" | "false" | "@" name | "$" name | number
 //             | func "(" expr ("," expr)* ")" | call
 //   call     := Type [ "(" [ arg ("," arg)* ] ")" ]
-//   func     := min | max | clamp | abs | lerp
+//   func     := min | max | clamp | abs | lerp | piecewise | steps
 //   arg      := [ field "=" ] value
 //   value    := number | "string" | 'string' | ident | [ value, ... ] | ${param}
 //   cmp      := "==" | "!=" | "<" | "<=" | ">" | ">="

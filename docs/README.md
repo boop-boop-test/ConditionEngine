@@ -12,6 +12,7 @@ overview; `include/ConditionEngine/ConditionEngineAPI.h` and `ConditionEngine.ps
 | [Watching conditions](watching-conditions.md) | Getting told when a result changes: watches, list watches, mod events, poll intervals |
 | [Values](values.md) | Reading numbers, pushing values, named values, value types and value watches |
 | [OAR conditions](oar-conditions.md) | Using presets and expressions in Open Animation Replacer submods |
+| [Survival needs](survival.md) | The built-in `$hunger`, `$fatigue`, `$cold`: which survival mod answers, the shared scale, adding a source |
 
 All examples use the C API, which works from any SKSE plugin whatever its compiler, CRT or JSON library. A host that
 builds ConditionEngine into itself as a static library can use the C++ API (`ConditionEngine/ConditionEngine.h`)

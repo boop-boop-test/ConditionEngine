@@ -148,11 +148,7 @@ namespace ConditionEngine {
                     args.push_back(std::move(arg));
                 }
             }
-            const auto arity = MathValue::Arity(*op);
-            if (arity ? args.size() != *arity : args.size() < 2) {
-                return fail(std::string(MathValue::OpName(*op)) + " takes " +
-                            (arity ? std::to_string(*arity) : std::string("two or more")) + " argument(s)");
-            }
+            if (auto why = MathValue::ArityError(*op, args.size()); !why.empty()) return fail(why);
             return std::make_unique<MathValue>(*op, std::move(args));
         }
 
@@ -200,8 +196,26 @@ namespace ConditionEngine {
             {MathValue::Op::Add, "+"},       {MathValue::Op::Sub, "-"},     {MathValue::Op::Mul, "*"},
             {MathValue::Op::Div, "/"},       {MathValue::Op::Neg, "neg"},   {MathValue::Op::Min, "min"},
             {MathValue::Op::Max, "max"},     {MathValue::Op::Clamp, "clamp"}, {MathValue::Op::Abs, "abs"},
-            {MathValue::Op::Lerp, "lerp"},
+            {MathValue::Op::Lerp, "lerp"},   {MathValue::Op::Piecewise, "piecewise"}, {MathValue::Op::Steps, "steps"},
         };
+
+        // v = x, x0, y0, x1, y1, ...
+        double Piecewise(const double* v, std::size_t count) {
+            const double x = v[0];
+            const std::size_t points = (count - 1) / 2;
+            auto px = [&](std::size_t i) { return v[1 + 2 * i]; };
+            auto py = [&](std::size_t i) { return v[2 + 2 * i]; };
+            const bool rising = px(0) <= px(points - 1);
+            auto before = [&](double a, double b) { return rising ? a <= b : a >= b; };
+            if (before(x, px(0))) return py(0);
+            for (std::size_t i = 1; i < points; ++i) {
+                if (!before(x, px(i))) continue;
+                const double span = px(i) - px(i - 1);
+                if (span == 0.0) return py(i);
+                return py(i - 1) + (py(i) - py(i - 1)) * (x - px(i - 1)) / span;
+            }
+            return py(points - 1);
+        }
     }
 
     MathValue::MathValue(Op op, std::vector<std::shared_ptr<const Value>> args) : op_(op), args_(std::move(args)) {
@@ -213,7 +227,7 @@ namespace ConditionEngine {
             if (!c) return;
             values.push_back(*c);
         }
-        if (values.empty() || (Arity(op_) ? values.size() != *Arity(op_) : values.size() < 2)) return;
+        if (values.empty() || !ArityError(op_, values.size()).empty()) return;
         const double out = Apply(values.data(), values.size());
         if (std::isfinite(out)) folded_ = out;
     }
@@ -237,6 +251,8 @@ namespace ConditionEngine {
             case Op::Max: return *std::max_element(v, v + count);
             case Op::Clamp: return std::min(std::max(v[0], v[1]), v[2]);
             case Op::Lerp: return v[0] + (v[1] - v[0]) * v[2];
+            case Op::Piecewise: return Piecewise(v, count);
+            case Op::Steps: return static_cast<double>(std::count_if(v + 1, v + count, [&](double t) { return v[0] >= t; }));
         }
         return 0.0;
     }
@@ -262,9 +278,24 @@ namespace ConditionEngine {
             case Op::Clamp:
             case Op::Lerp: return 3;
             case Op::Min:
-            case Op::Max: return std::nullopt;
+            case Op::Max:
+            case Op::Piecewise:
+            case Op::Steps: return std::nullopt;
             default: return 2;
         }
+    }
+
+    std::string MathValue::ArityError(Op op, std::size_t count) {
+        const std::string name = OpName(op);
+        if (auto exact = Arity(op)) {
+            return count == *exact ? std::string() : name + " takes " + std::to_string(*exact) + " argument(s)";
+        }
+        if (op == Op::Piecewise) {
+            return count >= 5 && count % 2 == 1 ? std::string()
+                                                : name + " takes a value and two or more x, y points (x, x0, y0, x1, y1, ...)";
+        }
+        if (op == Op::Steps) return count >= 2 ? std::string() : name + " takes a value and one or more thresholds";
+        return count >= 2 ? std::string() : name + " takes two or more argument(s)";
     }
 
     ValueResult MathValue::Read(const EvaluationContext& context) const {
@@ -359,6 +390,14 @@ namespace ConditionEngine {
                 tried += name + ": " + (r.reason.empty() ? ValueStatusName(r.status) : r.reason);
             };
             for (const auto& source : providers) {
+                // A source whose mod is not installed is skipped unread: its forms would only fail to resolve
+                if (!source->requiresPlugins.empty() || !source->requiresDlls.empty()) {
+                    const auto met = Availability::Get().CheckRequirements(source->requiresPlugins, source->requiresDlls);
+                    if (met.state == AvailabilityState::Unavailable) {
+                        note(source->name, ValueResult::Fail(ValueStatus::Unavailable, met.reason));
+                        continue;
+                    }
+                }
                 auto r = ReadDefinition(*source, nullptr, context);
                 if (r.Ok()) {
                     r.from = &source->name;

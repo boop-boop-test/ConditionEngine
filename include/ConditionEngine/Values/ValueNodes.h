@@ -27,10 +27,13 @@ namespace ConditionEngine {
         double value_;
     };
 
-    // + - * / neg min max clamp abs lerp
+    // + - * / neg min max clamp abs lerp piecewise steps
+    //   piecewise(x, x0, y0, x1, y1, ...): linear between the points, flat outside them; the x's run
+    //     one way (rising or falling)
+    //   steps(x, t1, t2, ...): how many of the thresholds x has reached (x >= t)
     class MathValue : public Value {
     public:
-        enum class Op { Add, Sub, Mul, Div, Neg, Min, Max, Clamp, Abs, Lerp };
+        enum class Op { Add, Sub, Mul, Div, Neg, Min, Max, Clamp, Abs, Lerp, Piecewise, Steps };
 
         MathValue(Op op, std::vector<std::shared_ptr<const Value>> args);
 
@@ -47,8 +50,10 @@ namespace ConditionEngine {
 
         static std::optional<Op> ParseOp(std::string_view name);  // "+", "neg", "clamp", ...
         static const char* OpName(Op op);
-        // Exact argument count, or nullopt for min / max (two or more)
+        // Exact argument count, or nullopt for the variadic ones (min, max, piecewise, steps)
         static std::optional<std::size_t> Arity(Op op);
+        // Empty when `count` arguments suit the operator, else what it takes ("piecewise takes ...")
+        static std::string ArityError(Op op, std::size_t count);
 
     private:
         double Apply(const double* v, std::size_t count) const;

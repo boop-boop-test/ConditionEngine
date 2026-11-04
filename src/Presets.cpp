@@ -6,6 +6,15 @@
 
 namespace ConditionEngine {
 
+    namespace {
+        struct BuiltinPreset {
+            const char* name;
+            const unsigned char* data;
+            std::size_t size;
+        };
+#include "ConditionEngine/BuiltinPresets.inc"
+    }
+
     std::filesystem::path GetDefaultPresetDirectory() {
         return std::filesystem::path("Data") / "SKSE" / "Plugins" / "ConditionEngine";
     }
@@ -19,17 +28,33 @@ namespace ConditionEngine {
             SKSE::log::error("ConditionEngine: failed to read preset file '{}': {}", file.string(), e.what());
             return 0;
         }
+        return LoadPresetJson(root, file.filename().string());
+    }
 
+    std::size_t LoadBuiltinPresets() {
+        std::size_t total = 0;
+        for (const auto& preset : kBuiltinPresets) {
+            nlohmann::json root;
+            try {
+                root = nlohmann::json::parse(preset.data, preset.data + preset.size, nullptr, true, /*ignore_comments=*/true);
+            } catch (const std::exception& e) {
+                SKSE::log::error("ConditionEngine: built-in preset '{}' is not valid JSON: {}", preset.name, e.what());
+                continue;
+            }
+            total += LoadPresetJson(root, std::string(preset.name) + " (built in)");
+        }
+        return total;
+    }
+
+    std::size_t LoadPresetJson(const nlohmann::json& root, const std::string& source) {
         const bool hasConditions = root.is_object() && root.contains("conditions") && root["conditions"].is_object();
         const bool hasValues = root.is_object() && root.contains("values") && root["values"].is_object();
         const bool hasCategories = root.is_object() && root.contains("categories") && root["categories"].is_array();
         if (!hasConditions && !hasValues && !hasCategories) {
-            SKSE::log::warn("ConditionEngine: preset file '{}' has no \"conditions\", \"values\" or \"categories\"",
-                            file.string());
+            SKSE::log::warn("ConditionEngine: preset '{}' has no \"conditions\", \"values\" or \"categories\"", source);
             return 0;
         }
 
-        const std::string source = file.filename().string();
         auto& registry = Registry::Get();
         std::size_t count = 0;
 

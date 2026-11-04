@@ -18,7 +18,8 @@ How-to guides (adding, reading and watching conditions, registering your own typ
   - **Every second, cheaply:** compare the cell, location, game minute, weather and actor flags, and re-check only the watches that depend on what changed. Game events do the same: equip, inventory, magic effects, combat, cell load, sleep and wait, menus, and game load.
   - **A full poll every 10 seconds:** for state with no change signal. The interval is set in `ConditionEngine.ini` (`fPollIntervalSeconds`) or with `SetPollInterval`, and each watch can override it.
 - **Self-describing types**: every type publishes a schema (its fields, value types, labels, defaults, allowed values and category). The catalog (`ConditionEngine_GetCatalog`, Papyrus `GetCatalog`) and a generated JSON Schema (`ConditionEngine_GetJsonSchema`) let editors and other mods offer any condition without knowing how it works.
-- **Values**: the number a numeric type compares, read on its own (`ActorValue(Health, usePercentage=true)`, `Level`, `Game(GetLevel)`, `PapyrusCall(...)`), with arithmetic (`$hunger * (1 - $light)`, `clamp`, `min`, `max`, `abs`, `lerp`). Named values (`$name`) come from presets, plugins or scripts, can be pushed from Papyrus (`SetValue`), and can be watched with a non-blocking per-frame read. Conditions compare them: `$vampire_hunger > 80`.
+- **Values**: the number a numeric type compares, read on its own (`ActorValue(Health, usePercentage=true)`, `Level`, `Game(GetLevel)`, `PapyrusCall(...)`), with arithmetic (`$hunger * (1 - $light)`, `clamp`, `min`, `max`, `abs`, `lerp`, `piecewise`, `steps`). Named values (`$name`) come from presets, plugins or scripts, can be pushed from Papyrus (`SetValue`), and can be watched with a non-blocking per-frame read. Conditions compare them: `$vampire_hunger > 80`.
+- **Shared survival needs**, built in: `$hunger`, `$fatigue` and `$cold` (0-100, with mild / moderate / severe at 25 / 50 / 75), `$hunger_stage` etc. (0-3) and `@HungerMild` ... `@ColdSevere`. Each reads the first installed survival mod that tracks the actor: Frostfall, SunHelm, Last Seed, iNeed or Survival Mode for the player, SeverActions for its followers. Papyrus `GetValueSource` says which one answered. The source order and what each mod maps to are in [Survival needs](docs/survival.md).
 - **Extensible**: other plugins can register their own condition types, with schemas, from C++ (`TypeBuilder`) or through the C API (`ConditionEngine_RegisterType`). Those types then appear in any editor that reads the catalog.
 
 ## Requirements (players)
@@ -176,7 +177,7 @@ With Open Animation Replacer (OAR) installed, `ConditionEngine.dll` adds two OAR
 
 ## Papyrus
 
-`ConditionEngine.psc` provides `Evaluate`, `EvaluateNamed`, `RegisterNamed`, `Validate`, `Describe`, `ToJson`, `Normalize`, `Watch` (with an optional poll interval), `Unwatch`, `RefreshWatch` and `SetPollInterval`/`GetPollInterval`. Watches send a mod event when their result changes. Values: `GetValue` (latent), `SetValue`, `SetGlobalValue`, `ClearValue`, `ClearGlobalValue`, `RegisterNamedValue` and `WatchValue` (mod event with the value). `Explain` (latent) returns the explanation text. Script-created watches, names and values are cleared on every load, so register them again from `OnPlayerLoadGame`.
+`ConditionEngine.psc` provides `Evaluate`, `EvaluateNamed`, `RegisterNamed`, `Validate`, `Describe`, `ToJson`, `Normalize`, `Watch` (with an optional poll interval), `Unwatch`, `RefreshWatch` and `SetPollInterval`/`GetPollInterval`. Watches send a mod event when their result changes. Values: `GetValue` (latent), `GetValueSource` (latent: which source answered a combined value), `SetValue`, `SetGlobalValue`, `ClearValue`, `ClearGlobalValue`, `RegisterNamedValue` and `WatchValue` (mod event with the value). `Explain` (latent) returns the explanation text. Script-created watches, names and values are cleared on every load, so register them again from `OnPlayerLoadGame`.
 
 ## Settings (`Data/SKSE/Plugins/ConditionEngine.ini`)
 
@@ -208,6 +209,8 @@ Put `*.json` files in `Data/SKSE/Plugins/ConditionEngine/`:
 }
 ```
 
+The survival values ([Survival needs](docs/survival.md)) are built into the DLL and load before these files, so a file that defines the same name replaces them.
+
 Value definitions are value text, or an object with `expr`, `label`, `unit`, `range`, `integer`, `fallback` (read while not OK), `enabledWhen`, `scope` (`auto`/`actor`/`global`; auto is inferred from what the value reads), `pushed`, `graceSeconds` (hold the last good value after a failed read) and `requiresPlugins`.
 
 ## Expression syntax
@@ -222,7 +225,7 @@ sum      := term (("+" | "-") term)*
 term     := unary (("*" | "/") unary)*
 unary    := "-" unary | atom
 atom     := "(" expr ")" | true | false | @Name | $name | number | func(expr, ...) | Type[(args)]
-func     := min | max | clamp | abs | lerp
+func     := min | max | clamp | abs | lerp | piecewise | steps
 args     := value | field=value, ...
 value    := number | "string" | 'string' | word | [list] | ${param}
 ```

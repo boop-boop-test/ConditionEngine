@@ -1,0 +1,246 @@
+{
+    // Shared survival needs, built into ConditionEngine.dll (docs/survival.md).
+    //
+    // $hunger, $fatigue and $cold read 0-100 per actor from the highest-priority survival mod that tracks that
+    // actor. Every source maps its own stages onto one scale: its first bad stage (peckish / tired / chilly) starts
+    // at 25, the next at 50, the one after at 75, its maximum is 100. $hunger_stage etc. read 0 none, 1 mild,
+    // 2 moderate, 3 severe. A preset file that defines the same names replaces these.
+    "sources": {
+        "Survival": "Survival needs",
+        "SurvivalMode": "Survival Mode",
+        "SunHelm": "SunHelm",
+        "LastSeed": "Last Seed",
+        "iNeed": "iNeed",
+        "Frostfall": "Frostfall",
+        "SeverActions": "SeverActions"
+    },
+    "categories": [
+        {
+            "id": "survival",
+            "label": "Survival",
+            "order": 48,
+            "icon": "🍖",
+            "description": "Hunger, fatigue, cold and the like, from whichever survival mod is installed"
+        }
+    ],
+    "values": {
+        // ── Combined values ──────────────────────────────────────────────────
+        "hunger": {
+            "label": "Hunger",
+            "description": "How hungry this actor is, 0-100 (25 mild, 50 moderate, 75 severe), from the first survival mod that tracks them: SunHelm, Last Seed, iNeed or Survival Mode for the player, SeverActions for its followers.",
+            "unit": "%", "range": [0, 100], "fallback": 0,
+            "combined": true, "category": "survival", "owner": "Survival"
+        },
+        "fatigue": {
+            "label": "Fatigue",
+            "description": "How tired this actor is (need for sleep), 0-100 (25 mild, 50 moderate, 75 severe), from the first survival mod that tracks them: SunHelm, Last Seed, iNeed or Survival Mode for the player, SeverActions for its followers.",
+            "unit": "%", "range": [0, 100], "fallback": 0,
+            "combined": true, "category": "survival", "owner": "Survival"
+        },
+        "cold": {
+            "label": "Cold",
+            "description": "How cold this actor is, 0-100 (0 warm, 25 chilly, 50 cold, 75 freezing), from the first survival mod that tracks them: Frostfall, SunHelm or Survival Mode for the player, SeverActions for its followers.",
+            "unit": "%", "range": [0, 100], "fallback": 0,
+            "combined": true, "category": "survival", "owner": "Survival"
+        },
+        "hunger_stage": {
+            "label": "Hunger stage",
+            "description": "0 none, 1 mild, 2 moderate, 3 severe (Hunger at 25 / 50 / 75).",
+            "expr": "steps($hunger, 25, 50, 75)",
+            "range": [0, 3], "integer": true, "fallback": 0, "category": "survival", "owner": "Survival"
+        },
+        "fatigue_stage": {
+            "label": "Fatigue stage",
+            "description": "0 none, 1 mild, 2 moderate, 3 severe (Fatigue at 25 / 50 / 75).",
+            "expr": "steps($fatigue, 25, 50, 75)",
+            "range": [0, 3], "integer": true, "fallback": 0, "category": "survival", "owner": "Survival"
+        },
+        "cold_stage": {
+            "label": "Cold stage",
+            "description": "0 none, 1 mild, 2 moderate, 3 severe (Cold at 25 / 50 / 75).",
+            "expr": "steps($cold, 25, 50, 75)",
+            "range": [0, 3], "integer": true, "fallback": 0, "category": "survival", "owner": "Survival"
+        },
+
+        // ── Frostfall (player): exposure 0-120 in _Frost_AttributeExposure ───
+        // Levels every 20 (warm, comfortable, chilly 40, very cold 60, freezing 80, freezing to death 100).
+        "frostfall_cold": {
+            "label": "Cold (Frostfall)",
+            "description": "The player's exposure in Frostfall while it runs, chilly (40) / very cold (60) / freezing (80) mapped to 25 / 50 / 75, the maximum 120 to 100.",
+            "unit": "%", "range": [0, 100], "fallback": 0,
+            "expr": "piecewise(GlobalVariable(\"0x183D|Frostfall.esp\"), 0, 0, 40, 25, 60, 50, 80, 75, 120, 100)",
+            "enabledWhen": "IsPlayer && GlobalVariable(\"0x6DCFB|Frostfall.esp\") == 2 && GlobalVariable(\"0x68113|Frostfall.esp\") == 2",
+            "requiresPlugins": ["Frostfall.esp"],
+            "provides": "cold", "priority": 90, "category": "survival", "owner": "Frostfall"
+        },
+
+        // ── SunHelm (player): _SHCurrent*Level globals, stage thresholds from its quest scripts ──
+        "sunhelm_hunger": {
+            "label": "Hunger (SunHelm)",
+            "description": "The player's hunger in SunHelm while its hunger system runs, peckish (80) / hungry (140) / ravenous (240) mapped to 25 / 50 / 75, the cap 360 to 100.",
+            "unit": "%", "range": [0, 100], "fallback": 0,
+            "expr": "piecewise(GlobalVariable(\"0xEAAE|SunHelmSurvival.esp\"), 0, 0, 80, 25, 140, 50, 240, 75, 360, 100)",
+            "enabledWhen": "IsPlayer && GlobalVariable(\"0x2EB63|SunHelmSurvival.esp\") == 1 && Game(GetQuestRunning, \"0x8EE8|SunHelmSurvival.esp\")",
+            "requiresPlugins": ["SunHelmSurvival.esp"],
+            "provides": "hunger", "priority": 80, "category": "survival", "owner": "SunHelm"
+        },
+        "sunhelm_fatigue": {
+            "label": "Fatigue (SunHelm)",
+            "description": "The player's fatigue in SunHelm while its fatigue system runs, slightly tired (160) / tired (240) / weary (360) mapped to 25 / 50 / 75, the cap 480 to 100.",
+            "unit": "%", "range": [0, 100], "fallback": 0,
+            "expr": "piecewise(GlobalVariable(\"0x21E3F|SunHelmSurvival.esp\"), 0, 0, 160, 25, 240, 50, 360, 75, 480, 100)",
+            "enabledWhen": "IsPlayer && GlobalVariable(\"0x2EB63|SunHelmSurvival.esp\") == 1 && Game(GetQuestRunning, \"0x1E844|SunHelmSurvival.esp\")",
+            "requiresPlugins": ["SunHelmSurvival.esp"],
+            "provides": "fatigue", "priority": 80, "category": "survival", "owner": "SunHelm"
+        },
+        "sunhelm_cold": {
+            "label": "Cold (SunHelm)",
+            "description": "The player's cold in SunHelm while its cold system runs, chilly (150) / cold (250) / freezing (450) mapped to 25 / 50 / 75, the cap 900 to 100.",
+            "unit": "%", "range": [0, 100], "fallback": 0,
+            "expr": "piecewise(GlobalVariable(\"0x6A13C5|SunHelmSurvival.esp\"), 0, 0, 150, 25, 250, 50, 450, 75, 900, 100)",
+            "enabledWhen": "IsPlayer && GlobalVariable(\"0x2EB63|SunHelmSurvival.esp\") == 1 && Game(GetQuestRunning, \"0x6A13C2|SunHelmSurvival.esp\")",
+            "requiresPlugins": ["SunHelmSurvival.esp"],
+            "provides": "cold", "priority": 80, "category": "survival", "owner": "SunHelm"
+        },
+
+        // ── Last Seed (player): _Seed_Attribute* globals 0-120, levels every 20 ──
+        "lastseed_hunger": {
+            "label": "Hunger (Last Seed)",
+            "description": "The player's hunger in Last Seed while its hunger system runs, hungry (40) / very hungry (60) / ravenous (80) mapped to 25 / 50 / 75, the maximum 120 to 100.",
+            "unit": "%", "range": [0, 100], "fallback": 0,
+            "expr": "piecewise(GlobalVariable(\"0x29CD|LastSeed.esp\"), 0, 0, 40, 25, 60, 50, 80, 75, 120, 100)",
+            "enabledWhen": "IsPlayer && GlobalVariable(\"0x7073|LastSeed.esp\") == 2 && Game(GetQuestRunning, \"0x29CC|LastSeed.esp\")",
+            "requiresPlugins": ["LastSeed.esp"],
+            "provides": "hunger", "priority": 70, "category": "survival", "owner": "LastSeed"
+        },
+        "lastseed_fatigue": {
+            "label": "Fatigue (Last Seed)",
+            "description": "The player's fatigue in Last Seed while its fatigue system runs, tired (40) / very tired (60) / exhausted (80) mapped to 25 / 50 / 75, the maximum 120 to 100.",
+            "unit": "%", "range": [0, 100], "fallback": 0,
+            "expr": "piecewise(GlobalVariable(\"0x29CF|LastSeed.esp\"), 0, 0, 40, 25, 60, 50, 80, 75, 120, 100)",
+            "enabledWhen": "IsPlayer && GlobalVariable(\"0x7075|LastSeed.esp\") == 2 && Game(GetQuestRunning, \"0x29D2|LastSeed.esp\")",
+            "requiresPlugins": ["LastSeed.esp"],
+            "provides": "fatigue", "priority": 70, "category": "survival", "owner": "LastSeed"
+        },
+
+        // ── iNeed (player): fullness 0-110 on _SNQuestScript (110 full), then time spent at 0 ──
+        // Fullness 50 (hungry / tired) maps to 25, 0 to 50; at 0 the penalty global (1, 2, 3) maps to 50 / 75 / 100.
+        "ineed_hunger": {
+            "label": "Hunger (iNeed)",
+            "description": "The player's hunger in iNeed while it runs: hungry at half fullness (25), starving at empty (50), then 75 / 100 the longer it lasts.",
+            "unit": "%", "range": [0, 100], "fallback": 0,
+            "expr": "max(piecewise(ScriptValue(_SNQuestScript, HungerState, float, form=\"0xD62|iNeed.esp\"), 0, 50, 50, 25, 110, 0), GlobalVariable(\"0x12DB|iNeed.esp\") * 25 + 25)",
+            "enabledWhen": "IsPlayer && Game(GetQuestRunning, \"0xD62|iNeed.esp\") && ScriptValue(_SNQuestScript, HungerRate, float, form=\"0xD62|iNeed.esp\") > 0",
+            "requiresPlugins": ["iNeed.esp"],
+            "provides": "hunger", "priority": 65, "category": "survival", "owner": "iNeed"
+        },
+        "ineed_fatigue": {
+            "label": "Fatigue (iNeed)",
+            "description": "The player's fatigue in iNeed while it runs: tired at half rest (25), exhausted at empty (50), then 75 / 100 the longer it lasts.",
+            "unit": "%", "range": [0, 100], "fallback": 0,
+            "expr": "max(piecewise(ScriptValue(_SNQuestScript, FatigueState, float, form=\"0xD62|iNeed.esp\"), 0, 50, 50, 25, 110, 0), GlobalVariable(\"0x12DC|iNeed.esp\") * 25 + 25)",
+            "enabledWhen": "IsPlayer && Game(GetQuestRunning, \"0xD62|iNeed.esp\") && ScriptValue(_SNQuestScript, FatigueRate, float, form=\"0xD62|iNeed.esp\") > 0",
+            "requiresPlugins": ["iNeed.esp"],
+            "provides": "fatigue", "priority": 65, "category": "survival", "owner": "iNeed"
+        },
+
+        // ── Survival Mode (Creation Club, player): Survival_*NeedValue globals, stages from its need scripts ──
+        "survivalmode_hunger": {
+            "label": "Hunger (Survival Mode)",
+            "description": "The player's hunger in Creation Club Survival Mode while it is on, peckish (160) / hungry (340) / weak (520) mapped to 25 / 50 / 75, the maximum 1000 to 100.",
+            "unit": "%", "range": [0, 100], "fallback": 0,
+            "expr": "piecewise(GlobalVariable(\"0x81A|ccqdrsse001-survivalmode.esl\"), 0, 0, 160, 25, 340, 50, 520, 75, 1000, 100)",
+            "enabledWhen": "IsPlayer && GlobalVariable(\"0x826|ccqdrsse001-survivalmode.esl\") == 1",
+            "requiresPlugins": ["ccqdrsse001-survivalmode.esl"],
+            "provides": "hunger", "priority": 60, "category": "survival", "owner": "SurvivalMode"
+        },
+        "survivalmode_fatigue": {
+            "label": "Fatigue (Survival Mode)",
+            "description": "The player's exhaustion in Creation Club Survival Mode while it is on, slightly tired (160) / tired (340) / weary (560) mapped to 25 / 50 / 75, the maximum 960 to 100.",
+            "unit": "%", "range": [0, 100], "fallback": 0,
+            "expr": "piecewise(GlobalVariable(\"0x816|ccqdrsse001-survivalmode.esl\"), 0, 0, 160, 25, 340, 50, 560, 75, 960, 100)",
+            "enabledWhen": "IsPlayer && GlobalVariable(\"0x826|ccqdrsse001-survivalmode.esl\") == 1",
+            "requiresPlugins": ["ccqdrsse001-survivalmode.esl"],
+            "provides": "fatigue", "priority": 60, "category": "survival", "owner": "SurvivalMode"
+        },
+        "survivalmode_cold": {
+            "label": "Cold (Survival Mode)",
+            "description": "The player's cold in Creation Club Survival Mode while it is on, chilly (120) / very cold (300) / freezing (500) mapped to 25 / 50 / 75, the maximum 1000 to 100.",
+            "unit": "%", "range": [0, 100], "fallback": 0,
+            "expr": "piecewise(GlobalVariable(\"0x81B|ccqdrsse001-survivalmode.esl\"), 0, 0, 120, 25, 300, 50, 500, 75, 1000, 100)",
+            "enabledWhen": "IsPlayer && GlobalVariable(\"0x826|ccqdrsse001-survivalmode.esl\") == 1",
+            "requiresPlugins": ["ccqdrsse001-survivalmode.esl"],
+            "provides": "cold", "priority": 60, "category": "survival", "owner": "SurvivalMode"
+        },
+
+        // ── SeverActions (its tracked followers): already 0-100 with levels at 25 / 50 / 75 ──
+        "severactions_hunger": {
+            "label": "Hunger (SeverActions)",
+            "description": "SeverActions' food hunger, for the followers its survival system tracks.",
+            "unit": "%", "range": [0, 100], "fallback": 0,
+            "expr": "clamp(PapyrusCall(SeverActionsNative, Native_Survival_GetHunger, interval=30), 0, 100)",
+            "enabledWhen": "ScriptValue(SeverActions_Survival, Enabled, bool, true, form=\"0xD62|SeverActions.esp\") && ScriptValue(SeverActions_Survival, HungerEnabled, bool, true, form=\"0xD62|SeverActions.esp\") && PapyrusCall(SeverActionsNative, Native_Survival_IsExcluded, interval=10) == 0 && PapyrusCall(SeverActionsNative, Survival_IsTracked, interval=30) == 1",
+            "requiresPlugins": ["SeverActions.esp"], "requiresDlls": ["SeverActionsNative.dll"],
+            "graceSeconds": 30, "refreshOn": ["SeverActions_Tick_Survival", "SeverActionsNative_FoodConsumed"],
+            "provides": "hunger", "priority": 50, "category": "survival", "owner": "SeverActions"
+        },
+        "severactions_fatigue": {
+            "label": "Fatigue (SeverActions)",
+            "description": "SeverActions' fatigue, for the followers its survival system tracks.",
+            "unit": "%", "range": [0, 100], "fallback": 0,
+            "expr": "clamp(PapyrusCall(SeverActionsNative, Native_Survival_GetFatigue, interval=30), 0, 100)",
+            "enabledWhen": "ScriptValue(SeverActions_Survival, Enabled, bool, true, form=\"0xD62|SeverActions.esp\") && ScriptValue(SeverActions_Survival, FatigueEnabled, bool, true, form=\"0xD62|SeverActions.esp\") && PapyrusCall(SeverActionsNative, Native_Survival_IsExcluded, interval=10) == 0 && PapyrusCall(SeverActionsNative, Survival_IsTracked, interval=30) == 1",
+            "requiresPlugins": ["SeverActions.esp"], "requiresDlls": ["SeverActionsNative.dll"],
+            "graceSeconds": 30, "refreshOn": ["SeverActions_Tick_Survival", "SeverActionsNative_FoodConsumed"],
+            "provides": "fatigue", "priority": 50, "category": "survival", "owner": "SeverActions"
+        },
+        "severactions_cold": {
+            "label": "Cold (SeverActions)",
+            "description": "SeverActions' cold, for the followers its survival system tracks.",
+            "unit": "%", "range": [0, 100], "fallback": 0,
+            "expr": "clamp(PapyrusCall(SeverActionsNative, Native_Survival_GetCold, interval=30), 0, 100)",
+            "enabledWhen": "ScriptValue(SeverActions_Survival, Enabled, bool, true, form=\"0xD62|SeverActions.esp\") && ScriptValue(SeverActions_Survival, ColdEnabled, bool, true, form=\"0xD62|SeverActions.esp\") && PapyrusCall(SeverActionsNative, Native_Survival_IsExcluded, interval=10) == 0 && PapyrusCall(SeverActionsNative, Survival_IsTracked, interval=30) == 1",
+            "requiresPlugins": ["SeverActions.esp"], "requiresDlls": ["SeverActionsNative.dll"],
+            "graceSeconds": 30, "refreshOn": ["SeverActions_Tick_Survival", "SeverActionsNative_FoodConsumed"],
+            "provides": "cold", "priority": 50, "category": "survival", "owner": "SeverActions"
+        }
+    },
+    "conditions": {
+        "HungerMild": {
+            "expr": "$hunger >= 25", "label": "Hunger: mild or worse",
+            "description": "Hunger at least 25 (peckish / hungry, by the mod's own stages).", "category": "survival", "tags": ["hunger"]
+        },
+        "HungerModerate": {
+            "expr": "$hunger >= 50", "label": "Hunger: moderate or worse",
+            "description": "Hunger at least 50.", "category": "survival", "tags": ["hunger"]
+        },
+        "HungerSevere": {
+            "expr": "$hunger >= 75", "label": "Hunger: severe",
+            "description": "Hunger at least 75 (ravenous / starving).", "category": "survival", "tags": ["hunger"]
+        },
+        "FatigueMild": {
+            "expr": "$fatigue >= 25", "label": "Fatigue: mild or worse",
+            "description": "Fatigue at least 25 (tired, by the mod's own stages).", "category": "survival", "tags": ["fatigue"]
+        },
+        "FatigueModerate": {
+            "expr": "$fatigue >= 50", "label": "Fatigue: moderate or worse",
+            "description": "Fatigue at least 50.", "category": "survival", "tags": ["fatigue"]
+        },
+        "FatigueSevere": {
+            "expr": "$fatigue >= 75", "label": "Fatigue: severe",
+            "description": "Fatigue at least 75 (exhausted).", "category": "survival", "tags": ["fatigue"]
+        },
+        "ColdMild": {
+            "expr": "$cold >= 25", "label": "Cold: mild or worse",
+            "description": "Cold at least 25 (chilly, by the mod's own stages).", "category": "survival", "tags": ["cold"]
+        },
+        "ColdModerate": {
+            "expr": "$cold >= 50", "label": "Cold: moderate or worse",
+            "description": "Cold at least 50 (cold / very cold).", "category": "survival", "tags": ["cold"]
+        },
+        "ColdSevere": {
+            "expr": "$cold >= 75", "label": "Cold: severe",
+            "description": "Cold at least 75 (freezing).", "category": "survival", "tags": ["cold"]
+        }
+    }
+}

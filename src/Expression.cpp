@@ -176,7 +176,7 @@ namespace ConditionEngine::Expression {
             const TypeInfo* info = nullptr;  // Call
         };
 
-        constexpr const char* kFunctions[] = {"min", "max", "clamp", "abs", "lerp"};
+        constexpr const char* kFunctions[] = {"min", "max", "clamp", "abs", "lerp", "piecewise", "steps"};
 
         bool IsFunctionName(std::string_view name) {
             return std::any_of(std::begin(kFunctions), std::end(kFunctions), [&](const char* f) { return IEquals(name, f); });
@@ -412,12 +412,8 @@ namespace ConditionEngine::Expression {
                     Expect(Tok::RParen, "')' or ','");
                 }
                 const auto op = MathValue::ParseOp(name);
-                const auto arity = op ? MathValue::Arity(*op) : std::optional<std::size_t>{};
-                if (arity ? args.size() != *arity : args.size() < 2) {
-                    throw SyntaxError{name + " takes " + (arity ? std::to_string(*arity) : std::string("two or more")) +
-                                          " argument(s)",
-                                      nameTok.pos};
-                }
+                if (!op) throw SyntaxError{"Unknown function '" + name + "'", nameTok.pos};
+                if (auto why = MathValue::ArityError(*op, args.size()); !why.empty()) throw SyntaxError{why, nameTok.pos};
                 return Math(MathValue::OpName(*op), std::move(args));
             }
 

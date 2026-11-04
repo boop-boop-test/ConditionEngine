@@ -274,7 +274,7 @@ CONDITIONENGINE_API void ConditionEngine_SetLoveSceneProvider(CE_ActorFlagFn fn,
 // ── Values ───────────────────────────────────────────────────────────────────
 // A value is the number a numeric condition type compares, read on its own, plus
 // arithmetic: "ActorValue(Health, usePercentage=true)", "$hunger * (1 - $light)",
-// "clamp($x, 0, 1)", min/max/abs/lerp; a condition used as a value reads 0 / 1.
+// "clamp($x, 0, 1)", min/max/abs/lerp/piecewise/steps; a condition used as a value reads 0 / 1.
 // Named values ($name) come from preset files ("values": {...}), RegisterNamedValue or
 // SetValue; redefinitions reach existing handles and watches. An unknown name reads
 // CE_VALUE_UNAVAILABLE. Conditions compare values directly: "$vampire_hunger > 80".

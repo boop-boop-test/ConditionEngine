@@ -43,6 +43,9 @@ namespace ConditionEngine {
         // enabledWhen and definition) and conditions read as 0 / 1
         AvailabilityStatus CheckValue(const Value& value) const;
         AvailabilityStatus CheckType(const TypeInfo& type) const;
+        // Required plugins (loaded, full or light) and DLLs (loaded modules)
+        AvailabilityStatus CheckRequirements(const std::vector<std::string>& plugins,
+                                             const std::vector<std::string>& dlls) const;
         bool SetTypeStatus(const std::string& type, AvailabilityStatus status);
         void SetLoadedPlugins(const std::vector<std::string>& plugins);
         // Main thread, after game data loads. Includes full and light plugins.

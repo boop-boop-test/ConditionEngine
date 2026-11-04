@@ -39,6 +39,8 @@ namespace {
                 const auto settings = ConditionEngine::LoadSettings(ConditionEngine::GetDefaultSettingsPath());
                 ConditionEngine::ApplyTemperatureSettings(settings);
 
+                const auto builtin = ConditionEngine::LoadBuiltinPresets();
+                SKSE::log::info("Loaded {} built-in named conditions and values (survival)", builtin);
                 auto count = ConditionEngine::LoadPresetDirectory(ConditionEngine::GetDefaultPresetDirectory());
                 SKSE::log::info("Loaded {} named conditions and values from presets", count);
 

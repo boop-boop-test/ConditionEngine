@@ -71,6 +71,16 @@ namespace ConditionEngine {
         return {};
     }
 
+    AvailabilityStatus Availability::CheckRequirements(const std::vector<std::string>& plugins,
+                                                       const std::vector<std::string>& dlls) const {
+        AvailabilityStatus result;
+        for (const auto& plugin : plugins) Merge(result, PluginStatus(plugin));
+        for (const auto& dll : dlls) {
+            if (!GetModuleHandleA(dll.c_str())) Merge(result, {AvailabilityState::Unavailable, dll + " is not loaded"});
+        }
+        return result;
+    }
+
     AvailabilityStatus Availability::CheckType(const TypeInfo& type) const {
         AvailabilityStatus result;
         {

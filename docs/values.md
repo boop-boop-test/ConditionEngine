@@ -2,8 +2,14 @@
 
 A value is a number read from the game: any numeric condition type without its comparison (`Level`,
 `ActorValue(Health, usePercentage=true)`, `Game(GetLevel)`), a named value (`$hunger`), a condition read as 1/0, or
-arithmetic over those (`clamp($hunger * (1 - $light), 0, 100)`, `min`, `max`, `abs`, `lerp`). Conditions compare
-them directly: `$vampire_hunger > 80`.
+arithmetic over those (`clamp($hunger * (1 - $light), 0, 100)`, `min`, `max`, `abs`, `lerp`, `piecewise`, `steps`).
+Conditions compare them directly: `$vampire_hunger > 80`.
+
+- `piecewise(x, x0, y0, x1, y1, ...)` is linear between the points and flat outside them; the x's run one way, rising
+  or falling. It maps a mod's own scale onto yours: `piecewise(GlobalVariable(MyNeed), 0, 0, 160, 25, 340, 50, 1000, 100)`.
+- `steps(x, t1, t2, ...)` counts the thresholds x has reached: `steps($hunger, 25, 50, 75)` reads 0-3.
+
+Shared survival values (`$hunger`, `$fatigue`, `$cold`) are built in: see [Survival needs](survival.md).
 
 Every read returns a status as well as the number:
 

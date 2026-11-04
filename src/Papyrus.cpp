@@ -158,6 +158,29 @@ namespace ConditionEngine::Papyrus {
             return Latent::kStarted;
         }
 
+        // Which source answered a combined value for the actor ("sunhelm_hunger"); "" when none is
+        // available or the value is not combined
+        Latent GetValueSource(InternalVM* vm, RE::VMStackID stackId, StaticFn*, RE::Actor* actor, RE::BSFixedString nameOrExpr) {
+            std::string error;
+            auto value = CompileValueCached(nameOrExpr.c_str(), &error);
+            if (!value) SKSE::log::warn("ConditionEngine.GetValueSource: {} in \"{}\"", error, nameOrExpr.c_str());
+            auto* tasks = SKSE::GetTaskInterface();
+            if (!tasks) return Latent::kFailed;
+            const RE::ActorHandle handle = actor ? actor->GetHandle() : RE::ActorHandle{};
+            const bool usePlayer = actor == nullptr;
+            tasks->AddTask([vm, stackId, value = std::move(value), handle, usePlayer]() {
+                std::string source;
+                RE::Actor* target = usePlayer ? RE::PlayerCharacter::GetSingleton() : handle.get().get();
+                if (value && target) {
+                    EvaluationContext context(target);
+                    const auto read = ReadValueAvailable(*value, context);
+                    if (read.Ok() && read.from && !read.fromOwnExpression) source = *read.from;
+                }
+                vm->ReturnLatentResult<RE::BSFixedString>(stackId, RE::BSFixedString(source.c_str()));
+            });
+            return Latent::kStarted;
+        }
+
         // Plain-text explanation of a condition (or, if it is not one, a value) for the actor
         Latent Explain(InternalVM* vm, RE::VMStackID stackId, StaticFn*, RE::Actor* actor, RE::BSFixedString expression) {
             auto* tasks = SKSE::GetTaskInterface();
@@ -386,6 +409,7 @@ namespace ConditionEngine::Papyrus {
             vm->RegisterFunction("GetCatalog", kScriptName, GetCatalog, true);
             vm->RegisterFunction("SetPollInterval", kScriptName, SetPollInterval);
             RegisterLatent<float>(vm, "GetValue", GetValue);
+            RegisterLatent<RE::BSFixedString>(vm, "GetValueSource", GetValueSource);
             RegisterLatent<RE::BSFixedString>(vm, "Explain", Explain);
             vm->RegisterFunction("SetValue", kScriptName, SetValue);
             vm->RegisterFunction("SetGlobalValue", kScriptName, SetGlobalValue);

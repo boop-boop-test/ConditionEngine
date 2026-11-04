@@ -6,6 +6,7 @@
 #include "ConditionEngine/Explain.h"
 #include "ConditionEngine/Expression.h"
 #include "ConditionEngine/FirstMatchList.h"
+#include "ConditionEngine/Presets.h"
 #include "ConditionEngine/Stats.h"
 #include "ConditionEngine/Values/PushedValues.h"
 #include "ConditionEngine/Values/RefreshOn.h"
@@ -188,6 +189,31 @@ void RunValueTests(CheckFn check) {
         Check(!bad && error.find("takes 3") != std::string::npos, "Math arity checked from JSON: " + error);
         bad = Value::FromJson("${Unset}", &error);
         Check(!bad && error.find("unresolved parameter") != std::string::npos, "unresolved ${param} is not a value");
+    }
+
+    // ── piecewise / steps ────────────────────────────────────────────────────
+    ExpectRead("piecewise(160, 0, 0, 160, 25, 340, 50, 520, 75, 1000, 100)", 25);
+    ExpectRead("piecewise(250, 0, 0, 160, 25, 340, 50, 520, 75, 1000, 100)", 37.5);
+    ExpectRead("piecewise(760, 0, 0, 160, 25, 340, 50, 520, 75, 1000, 100)", 87.5);
+    ExpectRead("piecewise(-5, 0, 0, 160, 25, 340, 50)", 0);      // flat below the first point
+    ExpectRead("piecewise(5000, 0, 0, 160, 25, 340, 50)", 50);   // and above the last
+    ExpectRead("piecewise(85, 0, 50, 50, 25, 110, 0)", 25.0 * 25.0 / 60.0);  // a falling scale (110 full = 0)
+    ExpectRead("piecewise(80, 110, 0, 50, 25, 0, 50)", 25.0 * 30.0 / 60.0);  // falling x's work too
+    ExpectRead("piecewise(50, 0, 0, 50, 10, 50, 20, 100, 30)", 10);          // a step: the first point at x
+    ExpectRead("steps(49, 25, 50, 75)", 1);
+    ExpectRead("steps(50, 25, 50, 75)", 2);
+    ExpectRead("steps(100, 25, 50, 75)", 3);
+    ExpectRead("steps(-1, 25, 50, 75)", 0);
+    ExpectValueRoundTrip("piecewise($x, 0, 0, 40, 25, 120, 100)", "piecewise($x, 0, 0, 40, 25, 120, 100)");
+    ExpectValueRoundTrip("steps($hunger, 25, 50, 75)", "steps($hunger, 25, 50, 75)");
+    ExpectError("piecewise(1, 0, 0, 1)", "two or more x, y points", true);
+    ExpectError("piecewise(1, 0, 0)", "two or more x, y points", true);
+    ExpectError("steps(1)", "one or more thresholds", true);
+    ExpectError("clamp(1, 2)", "takes 3", true);
+    {
+        std::string error;
+        auto bad = Value::FromJson(json::parse(R"({"type": "Math", "operator": "piecewise", "args": [1, 0, 0, 1, 1, 2]})"), &error);
+        Check(!bad && error.find("points") != std::string::npos, "piecewise arity checked from JSON: " + error);
     }
 
     // ── Named values ─────────────────────────────────────────────────────────
@@ -825,6 +851,68 @@ void RunValueTests(CheckFn check) {
         Check(Stats::Snapshot()["types"].empty(), "Reset clears per-type counters");
     }
 
+    // ── A source whose plugin is not loaded is skipped unread ────────────────
+    {
+        Availability::Get().SetLoadedPlugins({"Skyrim.esm"});
+        Define("skip_present", json{{"pushed", true}, {"provides", "skip_need"}, {"priority", 10}});
+        Define("skip_absent", json{{"pushed", true}, {"provides", "skip_need"}, {"priority", 90},
+                                   {"requiresPlugins", {"NotInstalled.esp"}}});
+        PushedValues::Get().Set(nullptr, "skip_present", 12);
+        PushedValues::Get().Set(nullptr, "skip_absent", 99);
+        auto r = Read("$skip_need");
+        Check(r.Ok() && r.value == 12 && r.FromText() == "skip_present",
+              "a missing plugin's source is skipped: " + std::to_string(r.value) + " " + r.FromText());
+        PushedValues::Get().Clear(nullptr, "skip_present");
+        r = Read("$skip_need");
+        Check(r.status == ValueStatus::Unavailable && r.reason.find("Plugin not loaded: NotInstalled.esp") != std::string::npos,
+              "the skipped source is listed with why: " + r.reason);
+        PushedValues::Get().Clear(nullptr, "skip_absent");
+    }
+
     Check(registry.UnregisterSource("value-tests") > 0, "named values unregister by source");
     Check(registry.FindNamedValue("doubled") == nullptr, "named value removed");
+
+    // ── Built-in survival preset (presets/ConditionEngine_Survival.json) ─────
+    {
+        const auto loaded = LoadBuiltinPresets();
+        Check(loaded == 29, "built-in survival preset: 20 values and 9 conditions, got " + std::to_string(loaded));
+        const char* values[] = {"hunger", "fatigue", "cold", "hunger_stage", "fatigue_stage", "cold_stage",
+                                "frostfall_cold", "sunhelm_hunger", "sunhelm_fatigue", "sunhelm_cold",
+                                "lastseed_hunger", "lastseed_fatigue", "ineed_hunger", "ineed_fatigue",
+                                "survivalmode_hunger", "survivalmode_fatigue", "survivalmode_cold",
+                                "severactions_hunger", "severactions_fatigue", "severactions_cold"};
+        for (const char* name : values) {
+            auto def = registry.FindNamedValue(name);
+            Check(def != nullptr, std::string("built-in value $") + name);
+            if (!def) continue;
+            for (const auto& problem : def->value ? def->value->Validate() : std::vector<std::string>{}) {
+                Check(false, std::string("$") + name + ": " + problem);
+            }
+            const bool source = !def->provides.empty();
+            Check(!source || (def->value && def->enabledWhen && !def->requiresPlugins.empty()),
+                  std::string("$") + name + " has an expression, an enabledWhen and its plugin");
+        }
+        auto order = [&](const std::string& need) {
+            std::string names;
+            for (const auto& source : registry.ProvidersOf(need)) names += (names.empty() ? "" : ",") + source->name;
+            return names;
+        };
+        Check(order("hunger") == "sunhelm_hunger,lastseed_hunger,ineed_hunger,survivalmode_hunger,severactions_hunger",
+              "hunger source order: " + order("hunger"));
+        Check(order("fatigue") ==
+                  "sunhelm_fatigue,lastseed_fatigue,ineed_fatigue,survivalmode_fatigue,severactions_fatigue",
+              "fatigue source order: " + order("fatigue"));
+        Check(order("cold") == "frostfall_cold,sunhelm_cold,survivalmode_cold,severactions_cold",
+              "cold source order: " + order("cold"));
+        for (const char* name : {"HungerMild", "HungerModerate", "HungerSevere", "FatigueMild", "FatigueModerate",
+                                 "FatigueSevere", "ColdMild", "ColdModerate", "ColdSevere"}) {
+            Check(registry.FindNamed(name) != nullptr, std::string("built-in condition @") + name);
+        }
+        // Nothing installed and no actor: the combined values read unavailable with their fallback
+        auto r = Read("$hunger");
+        Check(r.status == ValueStatus::Unavailable && r.value == 0 && r.reason.find("sunhelm_hunger") != std::string::npos,
+              "no survival mod: $hunger unavailable, reason lists the sources: " + r.reason);
+        r = Read("$cold_stage");
+        Check(!r.Ok() && r.value == 0, "a stage of an unavailable need is not OK and reads its fallback");
+    }
 }

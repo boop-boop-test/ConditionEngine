@@ -8,12 +8,13 @@
 //   ActorValue(Health, usePercentage=true)      a numeric type, its comparison left out
 //   $vampire_hunger                             a named value (Registry::RegisterNamedValue)
 //   $hunger * (1 - $light)                      + - * /, unary -, literals
-//   clamp($x, 0, 1), min(a, b), max(a, b), abs(x), lerp(a, b, t)
+//   clamp($x, 0, 1), min(a, b), max(a, b), abs(x), lerp(a, b, t),
+//   piecewise(x, x0, y0, x1, y1, ...), steps(x, t1, t2, ...)
 //   IsInterior                                  any condition, read as 0 / 1
 //
 // Values serialize to JSON like conditions do:
 //   3.5                                                   literal
-//   {"type": "Math", "operator": "*", "args": [a, b]}     + - * / neg min max clamp abs lerp
+//   {"type": "Math", "operator": "*", "args": [a, b]}     + - * / neg min max clamp abs lerp piecewise steps
 //   {"type": "NamedValue", "name": "hunger"}              $hunger
 //   {"type": "Truth", "condition": {...}}                 condition as 0 / 1
 //   {"type": "ActorValue", "actorValue": "Health"}        numeric type (TypeInfo::value set)
