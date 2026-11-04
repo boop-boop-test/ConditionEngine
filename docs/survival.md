@@ -49,6 +49,18 @@ freezing and numb), they share the top quarter.
 Per actor, the highest-priority source whose mod is installed, running and tracking that actor. A source whose plugin
 isn't loaded is skipped without being read.
 
+Player mods and NPC mods run side by side. With iNeed and SeverActions both installed, or SunHelm and SeverActions,
+each actor gets its own answer:
+
+| Actor | Answered by |
+|---|---|
+| The player | The first player survival mod that is on: Frostfall for cold, then SunHelm, Last Seed, iNeed, Survival Mode |
+| A follower SeverActions tracks | SeverActions |
+| Any other NPC | Nothing: the value reads unavailable (0) |
+
+The player sources check `IsPlayer`, and SeverActions only answers for actors it tracks. So the priorities below only
+order sources for the same kind of actor.
+
 | Priority | Hunger | Fatigue | Cold | Actors |
 |---|---|---|---|---|
 | 90 | | | Frostfall | player |
