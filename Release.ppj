@@ -1,6 +1,6 @@
 <?xml version='1.0'?>
 <!-- Compiles ConditionEngine.psc with Pyro: pyro.exe -i Release.ppj
-     Imports use the SKSE/Skyrim script sources installed by the parent DressCode build. -->
+     Imports use the SKSE/Skyrim script sources installed by the parent project's build. -->
 <PapyrusProject xmlns="PapyrusProject.xsd"
     Flags="TESV_Papyrus_Flags.flg"
     Game="sse"

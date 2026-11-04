@@ -42,7 +42,7 @@ namespace ConditionEngine {
         const std::string& GetKey() const { return ruleUUID.empty() ? ruleName : ruleUUID; }
 
         // The named condition, looked up by key (then display name). Engine-owned ones are
-        // kept until the availability revision moves; host-resolved ones (DressCode rules)
+        // kept until the availability revision moves; host-resolved ones (a host's rules)
         // are looked up every time, since hosts change them without moving it.
         std::shared_ptr<const Condition> Resolve() const;
 

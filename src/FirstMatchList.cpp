@@ -44,7 +44,7 @@ namespace ConditionEngine {
             if (type == "rule") {
                 auto key = node.value("ruleUUID", std::string());
                 if (key.empty()) key = node.value("ruleName", std::string());
-                // Host-resolved rules (DressCode) are opaque; engine-owned ones are followed
+                // Host-resolved rules are opaque; engine-owned ones are followed
                 if (registry.IsEngineNamed(key) && seen.insert("@" + key).second) {
                     if (auto named = registry.FindNamed(key)) Collect(named->ToJsonComplete(), out, seen, depth + 1);
                 }

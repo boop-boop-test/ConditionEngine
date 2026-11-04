@@ -3,7 +3,7 @@
 // EvaluationContext.h - Snapshot of game state that conditions evaluate against.
 //
 // Hosts may derive from this class to carry extra per-evaluation state for
-// their own condition types (e.g. DressCode's pending equipment state); such
+// their own condition types (e.g. a host's pending equipment state); such
 // conditions dynamic_cast the context and fall back gracefully when it is a
 // plain EvaluationContext.
 

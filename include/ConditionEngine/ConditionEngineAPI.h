@@ -84,7 +84,7 @@ typedef int32_t (*CE_CustomEvalFn)(void* actor, const char* paramsJson, void* us
 /// Evaluates a callback-backed named condition. Return non-zero for true.
 typedef int32_t (*CE_NamedEvalFn)(void* actor, void* userData);
 
-/// Host resolver for named conditions it owns (e.g. DressCode rules). Lookup returns
+/// Host resolver for named conditions it owns (e.g. a host's own rules). Lookup returns
 /// non-zero when `key` is known and writes its dependency bits; eval returns the result.
 typedef int32_t (*CE_NamedLookupFn)(const char* key, uint32_t* outDependencies, void* userData);
 typedef int32_t (*CE_NamedKeyEvalFn)(const char* key, void* actor, void* userData);
@@ -146,7 +146,7 @@ CONDITIONENGINE_API CE_Result ConditionEngine_AddNamedResolver(CE_NamedLookupFn 
 
 // ── Custom condition types ───────────────────────────────────────────────────
 
-/// Registers a condition type with its schema, so editors (DressCode's UI, other mods)
+/// Registers a condition type with its schema, so editors (any mod's UI)
 /// can offer it without knowing it. `schemaJson`:
 ///   {"name": "MyMod_IsCursed", "label": "Is Cursed", "category": "actor",
 ///    "description": "...", "source": "MyMod", "aliases": [], "compareField": "level",

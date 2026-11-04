@@ -505,13 +505,13 @@ void RunValueTests(CheckFn check) {
               "sources list carries labels");
 
         // A picker's view
-        const auto other = registry.GetCatalog(json{{"for", "DressCode"}});
+        const auto other = registry.GetCatalog(json{{"for", "OtherMod"}});
         Check(find(other["namedValues"], "name", "cat_private").is_null(), "owner-only values are absent from other pickers");
         Check(find(other["types"], "name", "Logical").is_null(), "expression-only types are not offered");
         Check(find(other["namedValues"], "name", "cat_hunger").is_object(), "everywhere values are offered");
         const auto own = registry.GetCatalog(json{{"for", "notalkjusthands"}});
         Check(find(own["namedValues"], "name", "cat_private").is_object(), "owner-only values are offered to their owner");
-        const auto everything = registry.GetCatalog(json{{"for", "DressCode"}, {"offered", false}});
+        const auto everything = registry.GetCatalog(json{{"for", "OtherMod"}, {"offered", false}});
         Check(find(everything["namedValues"], "name", "cat_private").is_object(), "offered:false shows everything");
         const auto valuesOnly = registry.GetCatalog(json{{"include", {"values"}}});
         Check(valuesOnly["types"].empty() && !valuesOnly["namedValues"].empty(), "include limits the sections");

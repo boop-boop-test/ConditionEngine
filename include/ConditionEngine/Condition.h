@@ -54,7 +54,7 @@ namespace ConditionEngine {
         // Generic forced-polling bucket: any condition with forcePolled=true
         // gets added to this bucket, which fires every poll tick.
         Polled          = 1 << 17,
-        // Host-signalled change (e.g. DressCode player dials). Hosts fire it
+        // Host-signalled change (state only the host knows). Hosts fire it
         // explicitly via Watcher::NotifyEvent when their own state changes.
         Dial            = 1 << 18,
         // Inventory contents (item counts) - container-changed events

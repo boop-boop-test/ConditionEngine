@@ -6,7 +6,7 @@
 //             under a canonical name plus aliases. Condition::FromJson dispatches here.
 // Named:      reusable conditions referenced by id/name from a "Rule" condition or the
 //             expression syntax (Rule("Name") / @Name). The engine stores its own
-//             (presets, C API, Papyrus) and consults host resolvers (e.g. DressCode rules).
+//             (presets, C API, Papyrus) and consults host resolvers (e.g. a host's own rules).
 // Values:     named numeric values referenced as $name (see Value.h), from presets,
 //             the C API or Papyrus. Numeric types also declare TypeInfo::value.
 // Providers:  hooks for game state the engine cannot know by itself (love scenes,

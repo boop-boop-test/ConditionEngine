@@ -19,7 +19,7 @@ string(CONCAT MSVC_RUNTIME_LIBRARY_STR
 # Dependencies - guard against parent-provided targets
 ###############################################################################
 
-# CommonLibSSE: when consumed by DressCode, the parent already built this.
+# CommonLibSSE: when consumed by a parent project, the parent already built this.
 # Standalone builds use extern/CommonLibVR-ng, falling back to a sibling checkout
 # in the parent repository so a second clone is not required.
 ###############################################################################
@@ -166,7 +166,7 @@ set(CONDITION_ENGINE_DLL_SOURCES
     src/Plugin.cpp
 )
 
-# When consumed by a parent project (DressCode), build as static lib.
+# When consumed by a parent project, build as static lib.
 # When built standalone (top-level project), build ConditionEngine.dll as an SKSE plugin.
 if(PROJECT_IS_TOP_LEVEL)
     add_commonlibsse_plugin(condition-engine-lib

@@ -1,7 +1,8 @@
 # ConditionEngine
 
-Reusable condition and expression evaluator for Skyrim SE/AE/VR SKSE plugins.
-It was extracted from DressCode and has no DressCode dependencies.
+Reusable condition and expression evaluator for Skyrim SE/AE/VR SKSE plugins. MIT licence (`LICENSE`).
+
+How-to guides (adding, reading and watching conditions, registering your own types, values, OAR) are in [`docs/`](docs/README.md).
 
 - **53 built-in condition types**, in 12 categories:
   - **Vanilla Creation Kit conditions**: `Game(GetLevel) >= 20`, `Game(IsSneaking)`, `Game(WornHasKeyword, ArmorHeavy)`. Any of Skyrim's condition functions works, with parameters converted from their declared types.
@@ -10,15 +11,15 @@ It was extracted from DressCode and has no DressCode dependencies.
   - **World**: `Worldspace`, `Hold`, `InLocation`, `InCell`, location type and keywords, interior/exterior, weather, time, date, `Holiday`, temperature
   - **Mods and scripts**: `IsPluginLoaded`, globals, quests, Papyrus script properties
   - **Logic**: seeded random, and/or/not, and references to named conditions
-- **Expression syntax** that compiles to the same JSON trees DressCode stores:
+- **Expression syntax** that compiles to JSON condition trees and prints back to text:
   `Time(20, 6) && !InteriorExterior(true) || @BadWeather`
-- **Named conditions**, which you reference as `@Name`. They can come from data-only preset files, from Papyrus, from other plugins, or from host resolvers such as DressCode rules.
+- **Named conditions**, which you reference as `@Name`. They can come from data-only preset files, from Papyrus, from other plugins, or from host resolvers that own their own rules.
 - **Watches**: a callback or mod event fires when a condition's result changes for an actor. Checking runs in two tiers:
   - **Every second, cheaply:** compare the cell, location, game minute, weather and actor flags, and re-check only the watches that depend on what changed. Game events do the same: equip, inventory, magic effects, combat, cell load, sleep and wait, menus, and game load.
   - **A full poll every 10 seconds:** for state with no change signal. The interval is set in `ConditionEngine.ini` (`fPollIntervalSeconds`) or with `SetPollInterval`, and each watch can override it.
 - **Self-describing types**: every type publishes a schema (its fields, value types, labels, defaults, allowed values and category). The catalog (`ConditionEngine_GetCatalog`, Papyrus `GetCatalog`) and a generated JSON Schema (`ConditionEngine_GetJsonSchema`) let editors and other mods offer any condition without knowing how it works.
 - **Values**: the number a numeric type compares, read on its own (`ActorValue(Health, usePercentage=true)`, `Level`, `Game(GetLevel)`, `PapyrusCall(...)`), with arithmetic (`$hunger * (1 - $light)`, `clamp`, `min`, `max`, `abs`, `lerp`). Named values (`$name`) come from presets, plugins or scripts, can be pushed from Papyrus (`SetValue`), and can be watched with a non-blocking per-frame read. Conditions compare them: `$vampire_hunger > 80`.
-- **Extensible**: other plugins can register their own condition types, with schemas, from C++ (`TypeBuilder`) or through the C API (`ConditionEngine_RegisterType`). Those types then appear in DressCode's editors automatically.
+- **Extensible**: other plugins can register their own condition types, with schemas, from C++ (`TypeBuilder`) or through the C API (`ConditionEngine_RegisterType`). Those types then appear in any editor that reads the catalog.
 
 ## Requirements (players)
 
@@ -27,7 +28,7 @@ It was extracted from DressCode and has no DressCode dependencies.
 - **SKSE** for your game build and **Address Library for SKSE Plugins** (the VR Address Library on VR).
 - Optional: **PapyrusUtil** for the `StorageUtil` values; `Data/SKSE/Plugins/ConditionEngine.ini` and data-only presets
   in `Data/SKSE/Plugins/ConditionEngine/`.
-- Usually installed by a mod that bundles it (DressCode, No Talk Just Hands). No Talk Just Hands uses a copy that is
+- Usually installed by a mod that bundles it (No Talk Just Hands). No Talk Just Hands uses a copy that is
   already loaded or installed standalone (`Data/SKSE/Plugins/ConditionEngine.dll`) before its own bundled one.
 
 ## Building (developers)
@@ -36,14 +37,14 @@ It was extracted from DressCode and has no DressCode dependencies.
   exist but are not used), **CMake 3.21+** and **Ninja** (both ship with VS 2022's C++ CMake tools).
 - **vcpkg** with `VCPKG_ROOT` set: the presets use its toolchain, the `x64-windows-skse` triplet from `cmake/`, and
   `vcpkg-configuration.json` adds the colorglass registry (skse and script-source ports).
-- **CommonLibVR-ng**: `extern/CommonLibVR-ng`, or the parent DressCode checkout's `../extern/CommonLibVR-ng` (the
-  fallback when this repo sits inside SkyrimOutfitEquipmentSystemNG).
+- **CommonLibVR-ng**: `extern/CommonLibVR-ng`, or a parent checkout's `../extern/CommonLibVR-ng` (the
+  fallback when this repo sits inside another project).
 - Build: `cmake --preset build-release-msvc`, then `cmake --build build/release-msvc`; the post-build step copies the
   DLL to `contrib/Distribution/PluginRelease/` (No Talk Just Hands bundles it from there, `CONDITIONENGINE_DIST`).
-- Papyrus (`ConditionEngine.psc`): `Release.ppj` imports the SKSE / Skyrim script sources from the parent DressCode
+- Papyrus (`ConditionEngine.psc`): `Release.ppj` imports the SKSE / Skyrim script sources from the parent project's
   build (`../build/release-msvc/vcpkg_installed/x64-windows-skse/contrib/papyrus`); compile with pyro.
 - Tests: `condition-engine-tests` (built when this is the top-level project); no game needed.
-- Licence: `vcpkg.json` declares Apache-2.0, but there is no `LICENSE` file yet; bundling mods need one beside the DLL.
+- Licence: MIT (`LICENSE`); bundling mods ship it beside the DLL.
 
 ## Build modes
 
@@ -78,7 +79,7 @@ ConditionEngine_Watch(h, actor, [](CE_WatchHandle, void* a, int32_t result, void
 
 The API is version 1 (`ConditionEngine_GetAPIVersion`) and prerelease: it may still change until the first release. `CE_WatchOptions` takes a poll interval (`CE_POLL_DEFAULT`, `CE_POLL_NEVER` or a number of milliseconds) and extra triggers, such as `CE_DEP_LOCATION` to re-check on every cell transition. `ConditionEngine_Refresh(watch)` forces a check.
 
-Custom types are registered with a schema: `ConditionEngine_RegisterType(R"({"name": "MyMod_IsCursed", "source": "MyMod", "fields": [{"key": "level", "type": "int"}]})", fn, ud, CE_DEP_POLLED, err, sizeof err)`. After that, `MyMod_IsCursed(3)` works in any expression, preset or DressCode rule.
+Custom types are registered with a schema: `ConditionEngine_RegisterType(R"({"name": "MyMod_IsCursed", "source": "MyMod", "fields": [{"key": "level", "type": "int"}]})", fn, ud, CE_DEP_POLLED, err, sizeof err)`. After that, `MyMod_IsCursed(3)` works in any expression or preset.
 
 ## Values
 
@@ -137,7 +138,7 @@ Quote an expression that has commas: `ce eval "Time(20, 6) && $hunger > 50"`.
 
 With Open Animation Replacer (OAR) installed, `ConditionEngine.dll` adds two OAR conditions, usable in any submod's `config.json` and in OAR's in-game editor:
 
-- `ConditionEngine`: the text `Preset` names a named condition (a preset, or one registered by a script, another plugin or DressCode). A leading `@` is optional.
+- `ConditionEngine`: the text `Preset` names a named condition (a preset, or one registered by a script or another plugin). A leading `@` is optional.
 - `ConditionEngineExpression`: the text `Expression` is any expression, compiled once per distinct text.
 
 ```json

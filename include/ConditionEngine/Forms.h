@@ -1,7 +1,7 @@
 #pragma once
 
 // Forms.h - Form string helpers ("0x12345|Plugin.esp").
-// Same format DressCode and most SKSE mods use for persisting form references.
+// Same format most SKSE mods use for persisting form references.
 
 #include "ConditionEngine/Common.h"
 

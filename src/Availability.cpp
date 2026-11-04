@@ -23,7 +23,7 @@ namespace ConditionEngine {
 
     namespace {
         // Set while checking a tree that references host-resolved named conditions (e.g.
-        // DressCode rules): hosts change those without moving the revision, so such
+        // a host's rules): hosts change those without moving the revision, so such
         // results are not cached
         thread_local bool t_uncacheable = false;
     }

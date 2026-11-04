@@ -38,7 +38,7 @@ namespace ConditionEngine {
         if (depth > 16) return 3;
         ++depth;
         auto named = Resolve();
-        const int cost = named ? named->Cost() : 3;  // host rules (DressCode): an ordinary read
+        const int cost = named ? named->Cost() : 3;  // host rules: an ordinary read
         --depth;
         return cost;
     }

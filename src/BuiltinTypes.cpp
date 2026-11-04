@@ -1,5 +1,5 @@
 // BuiltinTypes.cpp - Registers every built-in condition type with the Registry.
-// Each factory accepts the legacy field names and type aliases DressCode has written over time.
+// Each factory accepts the legacy field names and type aliases that hosts have written over time.
 
 #include "ConditionEngine/AllConditions.h"
 #include "ConditionEngine/Registry.h"
