@@ -115,6 +115,8 @@ SKSEPluginLoad(const SKSE::LoadInterface* a_skse) {
     SKSE::GetMessagingInterface()->RegisterListener(OnMessage);
     ConditionEngine::Papyrus::Register();
     ConditionEngine::Dials::Papyrus::Install();
+    // A bundled copy runs on its host's SKSE handle: the host keeps the dial values (ConditionEngine_SaveDials)
+    ConditionEngine::Dials::Serialization::DetectHosted();
     ConditionEngine::Dials::Serialization::Install();
     return true;
 }

@@ -421,6 +421,24 @@ CONDITIONENGINE_API void ConditionEngine_UnsubscribeDials(uint32_t subscription)
 /// 1 when it could open.
 CONDITIONENGINE_API int32_t ConditionEngine_OpenEditor(const char* id);
 
+// ── Hosting a bundled copy ───────────────────────────────────────────────────
+// A plugin that starts a bundled ConditionEngine.dll itself (running its SKSEPlugin_Load on the
+// host's own SKSE handle) owns that handle's co-save registration: SKSE allows one unique ID per
+// handle. Such a copy registers no co-save callbacks; the host keeps the dial values in a record
+// of its own by calling these from its own callbacks. A copy SKSE loaded itself saves its own
+// values, and these are then for inspection only.
+
+/// 1 when this copy was started by another plugin (it lives outside Data/SKSE/Plugins).
+CONDITIONENGINE_API int32_t ConditionEngine_IsHosted(void);
+/// From the host's save callback: the dial values as bytes (an opaque, versioned blob). Returns
+/// the size needed; writes when bufSize is large enough (call with a null buffer to measure).
+CONDITIONENGINE_API uint32_t ConditionEngine_SaveDials(uint8_t* buf, uint32_t bufSize);
+/// From the host's load callback, with the bytes SaveDials gave (form IDs are resolved through
+/// SKSE there). CE_ERR_PARSE when unreadable; the values then start fresh.
+CONDITIONENGINE_API CE_Result ConditionEngine_LoadDials(const uint8_t* data, uint32_t size);
+/// From the host's revert callback (before a load or a new game): every dial back to its default.
+CONDITIONENGINE_API void ConditionEngine_RevertDials(void);
+
 // ── Cost counters ────────────────────────────────────────────────────────────
 
 /// JSON, any thread:

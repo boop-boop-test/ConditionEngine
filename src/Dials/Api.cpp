@@ -2,6 +2,7 @@
 
 #include "ConditionEngine/ConditionEngineAPI.h"
 #include "Editor.h"
+#include "Serialization.h"
 #include "Service.h"
 
 #include <cstring>
@@ -98,6 +99,22 @@ CONDITIONENGINE_API uint32_t ConditionEngine_SubscribeDials(CE_DialChangedFn fn,
 }
 
 CONDITIONENGINE_API void ConditionEngine_UnsubscribeDials(uint32_t subscription) { Service::Get().Unsubscribe(subscription); }
+
+CONDITIONENGINE_API int32_t ConditionEngine_IsHosted(void) { return ConditionEngine::Dials::Serialization::Hosted() ? 1 : 0; }
+
+CONDITIONENGINE_API uint32_t ConditionEngine_SaveDials(uint8_t* buf, uint32_t bufSize) {
+    const auto bytes = ConditionEngine::Dials::Serialization::SaveBytes();
+    const auto needed = static_cast<uint32_t>(bytes.size());
+    if (buf && bufSize >= needed) std::memcpy(buf, bytes.data(), bytes.size());
+    return needed;
+}
+
+CONDITIONENGINE_API CE_Result ConditionEngine_LoadDials(const uint8_t* data, uint32_t size) {
+    if (!data && size) return CE_ERR_INVALID_ARG;
+    return ConditionEngine::Dials::Serialization::LoadBytes({data, size}) ? CE_OK : CE_ERR_PARSE;
+}
+
+CONDITIONENGINE_API void ConditionEngine_RevertDials(void) { ConditionEngine::Dials::Serialization::RevertValues(); }
 
 CONDITIONENGINE_API int32_t ConditionEngine_OpenEditor(const char* id) {
     if (!ConditionEngine::Editor::Available()) return 0;
