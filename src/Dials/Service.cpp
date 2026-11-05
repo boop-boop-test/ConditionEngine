@@ -692,7 +692,7 @@ namespace ConditionEngine::Dials {
         out["dials"] = std::move(dials);
         out["events"] = std::move(events);
         out["fileErrors"] = fileErrors_;
-        out["editorKey"] = GetSettings().editorKey ? KeyName(GetSettings().editorKey) : "";
+        out["editorKey"] = ComboName(GetSettings().editorKey);  // the editor replaces it with the live binding
         out["log"] = LiveValues()["log"];
         nlohmann::json userConditions = nlohmann::json::object();
         for (const auto& [name, j] : userConditions_) userConditions[name] = j;

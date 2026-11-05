@@ -57,12 +57,52 @@ namespace ConditionEngine::Dials {
         }
     }
 
+    KeyCombo ParseCombo(const std::string& text) {
+        KeyCombo combo;
+        std::string rest = text;
+        for (;;) {
+            const auto plus = rest.find('+');
+            if (plus == std::string::npos || plus + 1 >= rest.size()) break;  // "Num+" style names keep their +
+            auto part = rest.substr(0, plus);
+            part.erase(0, part.find_first_not_of(' '));
+            part.erase(part.find_last_not_of(' ') + 1);
+            if (IEquals(part, "Shift")) combo.mods |= kModShift;
+            else if (IEquals(part, "Ctrl") || IEquals(part, "Control")) combo.mods |= kModCtrl;
+            else if (IEquals(part, "Alt")) combo.mods |= kModAlt;
+            else return {};
+            rest = rest.substr(plus + 1);
+        }
+        rest.erase(0, rest.find_first_not_of(' '));
+        rest.erase(rest.find_last_not_of(' ') + 1);
+        if (rest.empty() || rest == "0") return {};
+        try {
+            std::size_t used = 0;
+            const auto v = std::stoul(rest, &used, 0);
+            if (used == rest.size()) {
+                combo.key = static_cast<std::uint32_t>(v) & 0xFF;
+                return combo.key ? combo : KeyCombo{};
+            }
+        } catch (...) {
+        }
+        combo.key = ParseKey(nlohmann::json(rest));
+        return combo.key ? combo : KeyCombo{};
+    }
+
+    std::string ComboName(const KeyCombo& combo) {
+        if (!combo.key) return {};
+        std::string out;
+        if (combo.mods & kModCtrl) out += "Ctrl+";
+        if (combo.mods & kModAlt) out += "Alt+";
+        if (combo.mods & kModShift) out += "Shift+";
+        return out + KeyName(combo.key);
+    }
+
     Settings LoadSettings() {
         Settings s;
         s.tickMs = std::clamp(static_cast<int>(ReadDouble("Dials", "iTickMs", s.tickMs)), 50, 2000);
         s.maxCatchUpHours = std::max(0.0, ReadDouble("Dials", "fMaxCatchUpHours", s.maxCatchUpHours));
         s.trackInterval = std::clamp(ReadDouble("Dials", "fTrackSeconds", s.trackInterval), 0.1, 60.0);
-        s.editorKey = ReadKey("Editor", "iHotkey", s.editorKey);
+        if (const auto hotkey = ReadString("Editor", "iHotkey", ""); !hotkey.empty()) s.editorKey = ParseCombo(hotkey);
         s.vrButton = ReadKey("Editor", "iVRButton", 0);
         s.vrModifier = ReadKey("Editor", "iVRModifier", 0);
         s.pauseGame = ReadBool("Editor", "bPauseGame", s.pauseGame);

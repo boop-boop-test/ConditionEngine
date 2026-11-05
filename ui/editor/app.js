@@ -1275,7 +1275,33 @@
     return '';
   }
 
-  let keyPick = '';         // the key chosen in the panel ('' = none)
+  let keyPick = '';         // the key chosen in the panel, without modifiers ('' = none)
+  const MOD_CODES = ['ShiftLeft', 'ShiftRight', 'ControlLeft', 'ControlRight', 'AltLeft', 'AltRight', 'MetaLeft', 'MetaRight'];
+
+  // "Ctrl+Shift+F10" -> {key: 'F10', shift, ctrl, alt}
+  function splitCombo(text) {
+    const parts = String(text || '').split('+');
+    const out = { key: '', shift: false, ctrl: false, alt: false };
+    while (parts.length > 1) {
+      const p = parts.shift().trim().toLowerCase();
+      if (p === 'shift') out.shift = true;
+      else if (p === 'ctrl' || p === 'control') out.ctrl = true;
+      else if (p === 'alt') out.alt = true;
+    }
+    out.key = parts[0] ? parts[0].trim() : '';
+    return out;
+  }
+
+  function comboText() {
+    if (!keyPick) return '';
+    return ($('key-ctrl').checked ? 'Ctrl+' : '') + ($('key-alt').checked ? 'Alt+' : '') +
+      ($('key-shift').checked ? 'Shift+' : '') + keyPick;
+  }
+
+  function showCombo() {
+    const text = comboText();
+    $('key-capture').textContent = text ? text + '  (press another to change)' : 'Press a key…';
+  }
   let capturing = false;
 
   function renderKeyRow() {
@@ -1285,7 +1311,14 @@
     $('key-row').classList.toggle('bad', !!state.editorKeyError);
   }
 
-  function setKeyPick(name) {
+  function setKeyPick(text, keepMods) {
+    const c = splitCombo(text);
+    const name = c.key;
+    if (!keepMods) {
+      $('key-shift').checked = c.shift;
+      $('key-ctrl').checked = c.ctrl;
+      $('key-alt').checked = c.alt;
+    }
     keyPick = name;
     const sel = $('key-select');
     if (name && !Array.prototype.some.call(sel.options, (o) => o.value === name)) {
@@ -1294,7 +1327,7 @@
       sel.appendChild(o);
     }
     sel.value = name;
-    $('key-capture').textContent = name ? name + '  (press another to change)' : 'Press a key…';
+    showCombo();
   }
 
   function openKeyPanel() {
@@ -1312,7 +1345,7 @@
       notes.push('InputManager handles this key, so it can be rebound in InputManager\'s menu too (a gamepad button as well).');
       if (state.editorKeyGamepad) notes.push('A gamepad button is bound in InputManager as well.');
     } else {
-      notes.push('Works anywhere outside menus, and closes the editor again.');
+      notes.push('Works anywhere outside menus; Esc closes the editor.');
     }
     if (state.editorKeyError) notes.push(state.editorKeyError);
     $('key-note').textContent = notes.join(' ');
@@ -1328,23 +1361,25 @@
 
   $('key-change').addEventListener('click', openKeyPanel);
   $('key-cancel').addEventListener('click', closeKeyPanel);
-  $('key-select').addEventListener('change', () => setKeyPick($('key-select').value));
+  $('key-select').addEventListener('change', () => setKeyPick($('key-select').value, true));
+  for (const id of ['key-shift', 'key-ctrl', 'key-alt']) $(id).addEventListener('change', showCombo);
   $('key-capture').addEventListener('click', () => {
     capturing = true;
-    $('key-capture').textContent = 'Press a key… (Esc: never mind)';
+    $('key-capture').textContent = 'Press a key, with Shift / Ctrl / Alt if you like… (Esc: never mind)';
   });
   document.addEventListener('keydown', (e) => {
     if (!capturing) return;
     e.preventDefault();
     e.stopPropagation();
+    if (MOD_CODES.indexOf(e.code) >= 0 || ['Shift', 'Control', 'Alt', 'Meta'].indexOf(e.key) >= 0) return;  // wait for the key
     capturing = false;
-    if (e.key === 'Escape' || e.code === 'Escape') { setKeyPick(keyPick); return; }
+    if (e.key === 'Escape' || e.code === 'Escape') { showCombo(); return; }
     const name = keyNameOf(e);
-    if (name) setKeyPick(name);
-    else $('key-capture').textContent = 'That key cannot be used; pick one from the list';
+    if (!name) { $('key-capture').textContent = 'That key cannot be used; pick one from the list'; return; }
+    setKeyPick((e.ctrlKey ? 'Ctrl+' : '') + (e.altKey ? 'Alt+' : '') + (e.shiftKey ? 'Shift+' : '') + name);
   }, true);
   $('key-save').addEventListener('click', () => {
-    request('setEditorKey', { key: keyPick, pauseGame: $('key-pause').checked }).then((res) => {
+    request('setEditorKey', { key: comboText(), pauseGame: $('key-pause').checked }).then((res) => {
       const box = $('key-messages');
       box.innerHTML = '';
       for (const e of res.errors || []) box.appendChild(el('div', 'msg error', e));
@@ -1400,7 +1435,7 @@
       if (sample.indexOf(t.id) >= 0) mockDial(t.id, t.json, t.id === 'outfit_mode' ? 'user' : 'file', t.id === 'outfit_mode' ? 'User' : 'Examples');
     }
     const log = [];
-    let editorKey = 'F10';
+    let editorKey = 'Shift+F10';
     let pauseGame = true;
     const userConditions = { Restless: { expr: '$alarm >= 3 && !Sitting', label: 'Restless', knowledge: 'You cannot sit still; you pace and fidget.' } };
     const userValues = { my_mood: { expr: '100 - $alarm * 10', label: 'Mood', unit: '%' } };
@@ -1421,7 +1456,7 @@
       events: ['Load', 'Hit', 'CombatStart', 'CombatEnd', 'Death', 'Kill', 'Equip', 'Unequip', 'SpellCast', 'MagicEffect',
         'Activate', 'ItemAdded', 'ItemRemoved', 'LocationChange', 'SleepStart', 'SleepStop', 'MenuOpen', 'MenuClose',
         'Animation', 'SkillUp'].map((n) => ({ name: n, help: 'browser mock: ' + n })),
-      fileErrors: [], editorKey: editorKey, editorKeyVia: 'Magelight', editorKeyGamepad: false, editorKeyError: '',
+      fileErrors: [], editorKey: editorKey, editorKeyVia: 'ConditionEngine', editorKeyGamepad: false, editorKeyError: '',
       pauseGame: pauseGame, log: log, userConditions: userConditions, userValues: userValues
     });
     const liveNow = () => ({ values: Object.assign({}, values), actors: {}, log: log, inGame: true });
@@ -1454,7 +1489,7 @@
           }
           case 'deleteNamed': delete (m.kind === 'value' ? userValues : userConditions)[m.name]; reply(); emit('dials_state', snapshot()); emit('dials_catalog', mockCatalog()); break;
           case 'setEditorKey':
-            if (m.key === 'G') { reply({ ok: false, errors: ['G is not free: NoTalkJustHands holds it (browser mock)'] }); break; }
+            if (m.key === 'G' || m.key === 'X') { reply({ ok: false, errors: ['G is not free: NoTalkJustHands holds it (browser mock)'] }); break; }
             editorKey = m.key;
             pauseGame = m.pauseGame;
             reply();

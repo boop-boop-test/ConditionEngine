@@ -72,23 +72,22 @@ namespace ConditionEngine::Editor {
         }
 
         // ── The key that opens the editor ────────────────────────────────────
-        // With InputManager it is an InputManager action the player rebinds there (gamepad too); without it
-        // Magelight binds the keyboard key. The player's pick in the editor (User.json "editor") wins over the ini.
-        enum class Via { None, InputManager, Magelight };
+        // With InputManager it is an InputManager action the player rebinds there (gamepad too). Without it a
+        // bare key is a Magelight hotkey, and a key with Shift / Ctrl / Alt is watched here (Magelight binds bare
+        // keys only). The player's pick in the editor (User.json "editor") wins over the ini.
+        enum class Via { None, InputManager, Magelight, Watched };
         constexpr const char* kInputManagerAction = "ConditionEngine_OpenEditor";
         constexpr const char* kInputManagerOwner = "ConditionEngine";
 
         Via g_via = Via::None;
-        std::uint32_t g_key = 0;  // DirectInput scan code, 0 = none
+        KeyCombo g_combo;  // the key that opens the editor ({} = none)
         bool g_pause = true;
         int g_imAction = -1;
         std::string g_keyError;
 
-        std::uint32_t EffectiveKey() {
+        KeyCombo EffectiveKey() {
             const auto prefs = Service::Get().EditorPrefs();
-            if (auto it = prefs.find("hotkey"); it != prefs.end() && it->is_string()) {
-                return it->get<std::string>().empty() ? 0 : ParseKey(*it);
-            }
+            if (auto it = prefs.find("hotkey"); it != prefs.end() && it->is_string()) return ParseCombo(it->get<std::string>());
             return Dials::GetSettings().editorKey;
         }
 
@@ -96,6 +95,22 @@ namespace ConditionEngine::Editor {
             const auto prefs = Service::Get().EditorPrefs();
             if (auto it = prefs.find("pauseGame"); it != prefs.end() && it->is_boolean()) return it->get<bool>();
             return Dials::GetSettings().pauseGame;
+        }
+
+        bool ModifiersHeld(std::uint32_t mods) {
+            auto down = [](int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; };
+            return down(VK_SHIFT) == ((mods & kModShift) != 0) && down(VK_CONTROL) == ((mods & kModCtrl) != 0) &&
+                   down(VK_MENU) == ((mods & kModAlt) != 0);
+        }
+
+        void Toggle() {
+            if (g_open.load()) {
+                Close();
+                return;
+            }
+            auto* ui = RE::UI::GetSingleton();
+            if (ui && (ui->GameIsPaused() || ui->IsMenuOpen(RE::Console::MENU_NAME))) return;  // in a menu
+            Open({});
         }
 
         // DirectInput scan codes <-> the virtual keys InputManager stores (extended keys carry 0x80 / an E0 prefix)
@@ -111,16 +126,34 @@ namespace ConditionEngine::Editor {
             return (scan & 0xFF) | ((scan >> 8) == 0xE0 ? 0x80u : 0u);
         }
 
+        // InputManager takes one modifier key; Shift wins over Ctrl over Alt
+        std::uint32_t ModifierVirtualKey(std::uint32_t mods) {
+            if (mods & kModShift) return VK_SHIFT;
+            if (mods & kModCtrl) return VK_CONTROL;
+            if (mods & kModAlt) return VK_MENU;
+            return 0;
+        }
+
+        std::uint32_t ModsOfVirtualKey(std::uint32_t vk) {
+            switch (vk) {
+                case VK_SHIFT: case VK_LSHIFT: case VK_RSHIFT: return kModShift;
+                case VK_CONTROL: case VK_LCONTROL: case VK_RCONTROL: return kModCtrl;
+                case VK_MENU: case VK_LMENU: case VK_RMENU: return kModAlt;
+                default: return 0;
+            }
+        }
+
         InputManagerAPI::IInputManager* InputManager() {
             return InputManagerAPI::_API ? InputManagerAPI::_API : InputManagerAPI::RequestAPIDirect();
         }
 
-        bool SetInputManagerKey(std::uint32_t dx) {
+        bool SetInputManagerKey(const KeyCombo& combo) {
             auto* im = InputManager();
             if (!im || g_imAction < 0) return false;
             auto info = im->GetActionInfo(g_imAction);
             info.id = g_imAction;
-            info.pcMainKey = VirtualKeyOf(dx);
+            info.pcMainKey = VirtualKeyOf(combo.key);
+            info.pcModifierKey = ModifierVirtualKey(combo.mods);
             info.isValid = true;
             return im->UpdateActionMapping(g_imAction, info);
         }
@@ -148,16 +181,17 @@ namespace ConditionEngine::Editor {
         }
 
         // The key InputManager has now (it may have been rebound there)
-        std::uint32_t InputManagerKey(bool& gamepad) {
+        KeyCombo InputManagerKey(bool& gamepad) {
             gamepad = false;
             auto* im = InputManager();
-            if (!im || g_imAction < 0) return 0;
+            if (!im || g_imAction < 0) return {};
             const auto info = im->GetActionInfo(g_imAction);
-            gamepad = info.isValid && info.gamepadMainKey != 0;
-            return info.isValid ? ScanCodeOf(info.pcMainKey) : 0;
+            if (!info.isValid) return {};
+            gamepad = info.gamepadMainKey != 0;
+            return {ScanCodeOf(info.pcMainKey), ModsOfVirtualKey(info.pcModifierKey)};
         }
 
-        // Magelight: (re)binds the keyboard key and the VR button. False and g_keyError when another mod holds it.
+        // Magelight: (re)binds a bare key and the VR button. False and g_keyError when another mod holds the key.
         bool BindMagelight(std::uint32_t key, bool pause) {
             if (!g_api || !g_view) return false;
             g_api->BindHotkey(g_view, 0, ML::kHotkeyActionUnbind);
@@ -184,24 +218,57 @@ namespace ConditionEngine::Editor {
             return ok;
         }
 
+        // A combo is watched here; a bare key goes to Magelight. False when Magelight refused the key.
+        bool Bind(const KeyCombo& combo, bool pause) {
+            if (combo.key && combo.mods) {
+                BindMagelight(0, pause);  // only the VR button
+                return true;
+            }
+            return BindMagelight(combo.key, pause);
+        }
+
         void ApplyBinding() {
-            g_key = EffectiveKey();
+            g_combo = EffectiveKey();
             g_pause = EffectivePause();
             g_keyError.clear();
             if (g_via == Via::InputManager) {
                 BindMagelight(0, g_pause);  // the VR button only: InputManager has the keyboard
                 return;
             }
-            g_via = BindMagelight(g_key, g_pause) && g_key ? Via::Magelight : Via::None;
+            if (!Bind(g_combo, g_pause) || !g_combo.key) g_via = Via::None;
+            else g_via = g_combo.mods ? Via::Watched : Via::Magelight;
         }
+
+        // Keys with modifiers, outside InputManager (main thread, between frames)
+        class KeySink final : public RE::BSTEventSink<RE::InputEvent*> {
+        public:
+            static KeySink* Get() {
+                static KeySink sink;
+                return &sink;
+            }
+            RE::BSEventNotifyControl ProcessEvent(RE::InputEvent* const* events, RE::BSTEventSource<RE::InputEvent*>*) override {
+                if (g_via != Via::Watched || !events) return RE::BSEventNotifyControl::kContinue;
+                for (auto* e = *events; e; e = e->next) {
+                    if (e->GetEventType() != RE::INPUT_EVENT_TYPE::kButton) continue;
+                    const auto* button = e->AsButtonEvent();
+                    if (!button || button->GetDevice() != RE::INPUT_DEVICE::kKeyboard || !button->IsDown()) continue;
+                    if (button->GetIDCode() != g_combo.key || !ModifiersHeld(g_combo.mods)) continue;
+                    Toggle();
+                    break;
+                }
+                return RE::BSEventNotifyControl::kContinue;
+            }
+        };
 
         nlohmann::json HotkeyStatus() {
             nlohmann::json j;
-            std::uint32_t key = g_key;
+            KeyCombo combo = g_combo;
             bool gamepad = false;
-            if (g_via == Via::InputManager) key = InputManagerKey(gamepad);
-            j["editorKey"] = key ? KeyName(key) : "";
-            j["editorKeyVia"] = g_via == Via::InputManager ? "InputManager" : g_via == Via::Magelight ? "Magelight" : "none";
+            if (g_via == Via::InputManager) combo = InputManagerKey(gamepad);
+            j["editorKey"] = ComboName(combo);
+            j["editorKeyVia"] = g_via == Via::InputManager ? "InputManager"
+                                : g_via == Via::None       ? "none"
+                                                           : "ConditionEngine";
             j["editorKeyGamepad"] = gamepad;
             j["editorKeyError"] = g_keyError;
             j["pauseGame"] = g_pause;
@@ -211,27 +278,27 @@ namespace ConditionEngine::Editor {
         Dials::Outcome SetEditorKey(const nlohmann::json& m) {
             Dials::Outcome o;
             nlohmann::json prefs = nlohmann::json::object();
-            std::uint32_t key = g_key;
+            KeyCombo combo = g_combo;
             if (auto it = m.find("key"); it != m.end() && it->is_string()) {
                 const auto name = it->get<std::string>();
-                key = name.empty() ? 0 : ParseKey(*it);
-                if (!name.empty() && !key) {
+                combo = ParseCombo(name);
+                if (!name.empty() && !combo.key) {
                     o.errors.push_back("unknown key '" + name + "'");
                     return o;
                 }
-                prefs["hotkey"] = key ? KeyName(key) : "";
+                prefs["hotkey"] = ComboName(combo);
             }
             const bool pause = m.contains("pauseGame") && m["pauseGame"].is_boolean() ? m["pauseGame"].get<bool>() : g_pause;
             prefs["pauseGame"] = pause;
 
             if (g_via == Via::InputManager) {
-                if (prefs.contains("hotkey") && !SetInputManagerKey(key)) {
+                if (prefs.contains("hotkey") && !SetInputManagerKey(combo)) {
                     o.errors.push_back("InputManager did not take the new key; change it in InputManager's menu");
                     return o;
                 }
-            } else if (!BindMagelight(key, pause)) {
+            } else if (!Bind(combo, pause)) {
                 o.errors.push_back(g_keyError);
-                BindMagelight(g_key, g_pause);  // the old key back
+                Bind(g_combo, g_pause);  // the old key back
                 return o;
             }
             std::string error;
@@ -252,17 +319,7 @@ namespace ConditionEngine::Editor {
                 const bool ours = static_cast<int>(e->numArg) == g_imAction ||
                                   std::string_view(e->strArg.c_str()) == kInputManagerAction;
                 if (!ours) return RE::BSEventNotifyControl::kContinue;
-                if (auto* tasks = SKSE::GetTaskInterface()) {
-                    tasks->AddTask([]() {
-                        if (g_open.load()) {
-                            Close();
-                            return;
-                        }
-                        auto* ui = RE::UI::GetSingleton();
-                        if (ui && (ui->GameIsPaused() || ui->IsMenuOpen(RE::Console::MENU_NAME))) return;  // in a menu
-                        Open({});
-                    });
-                }
+                if (auto* tasks = SKSE::GetTaskInterface()) tasks->AddTask([]() { Toggle(); });
                 return RE::BSEventNotifyControl::kContinue;
             }
         };
@@ -451,6 +508,8 @@ namespace ConditionEngine::Editor {
         SetupInputManager();
         if (g_via == Via::InputManager) {
             if (auto* mods = SKSE::GetModCallbackEventSource()) mods->AddEventSink(&sink);
+        } else if (auto* input = RE::BSInputDeviceManager::GetSingleton()) {
+            input->AddEventSink(KeySink::Get());  // keys with Shift / Ctrl / Alt (Magelight binds bare keys)
         }
         ApplyBinding();
         const auto status = HotkeyStatus();

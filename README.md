@@ -141,7 +141,7 @@ In game, `ce` in the console (it takes over the unused vanilla `TestCode` comman
 - `ce warmth`: each worn item and the warmth and coverage it adds
 - `ce dials [help]`: every dial and its value; `ce dials set|add|reset|toggle|cycle <dial> [n]`, `ce dials signal <event> [n]`, `ce dials log`, `ce dials info <dial>`, `ce dials reload`
 - `ce dials skyrimnet [dial]`: what `get_dials()` answers SkyrimNet for the selected actor
-- `ce ui [name]`: open the editor (Magelight UI); F10 also opens it, changeable in the editor or through InputManager
+- `ce ui [name]`: open the editor (Magelight UI); Shift+F10 also opens it, changeable in the editor or through InputManager
 
 Quote an expression that has commas: `ce eval "Time(20, 6) && $hunger > 50"`.
 
@@ -196,7 +196,7 @@ With Open Animation Replacer (OAR) installed, `ConditionEngine.dll` adds two OAR
 - `[Watcher] fPollIntervalSeconds = 10` and `fDetectIntervalSeconds = 1`
 - `[Temperature] sGlobal`, `fScale` and `fOffset`: read `Temperature(...)` from a global set by a survival mod
 - `[Console] sReplaceCommand = TestCode`: the vanilla console command `ce` replaces; empty adds no command
-- `[Dials] iTickMs`, `fMaxCatchUpHours`, `fTrackSeconds`, `bVerbose`; `[Editor] iHotkey` (F10), `bPauseGame`, `iVRButton`, `iVRModifier`; `[SkyrimNet] bEnable`, `fRefreshSeconds` ([Dials](docs/dials.md#settings-conditionengineini))
+- `[Dials] iTickMs`, `fMaxCatchUpHours`, `fTrackSeconds`, `bVerbose`; `[Editor] iHotkey` (Shift+F10), `bPauseGame`, `iVRButton`, `iVRModifier`; `[SkyrimNet] bEnable`, `fRefreshSeconds` ([Dials](docs/dials.md#settings-conditionengineini))
 
 ## Notes
 

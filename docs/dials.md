@@ -179,7 +179,7 @@ fTrackSeconds = 2        ; how often "track" is checked again per actor
 bVerbose = false         ; log every notified change
 
 [Editor]
-iHotkey = F10            ; the key that opens the editor: a name or a DirectInput scan code; 0 = none
+iHotkey = Shift+F10      ; the key that opens the editor: Shift+F10, Ctrl+Alt+K, Insert, 0x44; 0 = none
 bPauseGame = true
 iVRButton = 0            ; VR: a controller button that opens it (1 B/Y, 2 grip, 7 A/X, 32 stick, 33 trigger, 35 touchpad)
 iVRModifier = 0          ; VR: a second button held with it
@@ -191,13 +191,15 @@ fRefreshSeconds = 1.5    ; how fresh condition_engine() answers are
 
 ## Opening the editor
 
-F10 opens and closes the editor (also `ce ui` in the console, `Dials.OpenEditor()` and `ConditionEngine_OpenEditor`).
-Change the key in the editor itself (**Open with … Change** at the bottom of the sidebar: press a key or pick one,
-or none). Choosing one there saves it in `User/User.json` and applies at once; it wins over `[Editor] iHotkey`.
+Shift+F10 opens the editor (also `ce ui` in the console, `Dials.OpenEditor()` and `ConditionEngine_OpenEditor`).
+Change the key in the editor itself (**Open with … Change** at the bottom of the sidebar: press a key, with Shift / Ctrl /
+Alt if you like, or pick one, or none). Choosing one there saves it in `User/User.json` and applies at once; it wins over `[Editor] iHotkey`.
 
 - **With InputManager installed**, the key is the InputManager action `ConditionEngine_OpenEditor` ("Open the
   ConditionEngine editor"). The ini key is only its first binding; rebind it in InputManager's menu, a gamepad
   button included, or here.
-- **Without it**, Magelight UI binds the key. When another mod already holds that key, the editor says so and keeps
-  the old one.
+- **Without it**, a key with Shift, Ctrl or Alt (the default) is watched by ConditionEngine, and a bare key is bound
+  by Magelight UI; when another mod already holds a bare key, the editor says so and keeps the old one. Esc closes
+  the editor.
+- InputManager takes one modifier per action: Shift+F10 binds F10 with Shift as its modifier key.
 - **In VR**, set `[Editor] iVRButton` (and `iVRModifier`) to open it from a controller.
