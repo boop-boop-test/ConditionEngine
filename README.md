@@ -29,9 +29,11 @@ How-to guides (adding, reading and watching conditions, registering your own typ
 
 ## Requirements (players)
 
-- **Skyrim SE, AE or VR.** Built with CommonLibVR NG (alandtse/CommonLibVR, `ng` branch): one DLL for the three
-  runtimes. Tested in game on AE 1.6.1170; SE 1.5.97 and VR are untested.
-- **SKSE** for your game build and **Address Library for SKSE Plugins** (the VR Address Library on VR).
+- **Skyrim SE, AE or VR.** Built with CommonLibVR NG (alandtse/CommonLibVR, `ng` branch, MIT): one DLL for the
+  runtimes. Tested in game on AE 1.6.1170; SE 1.5.97 and VR are untested. **1.7.99+ support is experimental**: it
+  loads and its basics were checked once on 1.7.104, but it is not tested in play.
+- **SKSE** for your game build (2.3.1+ on 1.7.104) and **Address Library for SKSE Plugins** (v13+ on 1.7.x; the VR
+  Address Library on VR).
 - Optional: **PapyrusUtil** for the `StorageUtil` values; `Data/SKSE/Plugins/ConditionEngine.ini` and data-only presets
   in `Data/SKSE/Plugins/ConditionEngine/`.
 - Usually installed by a mod that bundles it (No Talk Just Hands). No Talk Just Hands uses a copy that is
@@ -44,7 +46,11 @@ How-to guides (adding, reading and watching conditions, registering your own typ
 - **vcpkg** with `VCPKG_ROOT` set: the presets use its toolchain, the `x64-windows-skse` triplet from `cmake/`, and
   `vcpkg-configuration.json` adds the colorglass registry (skse and script-source ports).
 - **CommonLibVR-ng**: `extern/CommonLibVR-ng`, or a parent checkout's `../extern/CommonLibVR-ng` (the
-  fallback when this repo sits inside another project).
+  fallback when this repo sits inside another project), or any checkout given with
+  `-DCONDITIONENGINE_COMMONLIB_DIR=<path>`. CommonLibVR `ng` v4.7.1 (MIT) builds SE 1.5.97, AE 1.6.x and VR.
+  Skyrim SE 1.7.99+ needs a CommonLib with 1.7 support (the format 5 Address Library, SKSE 2.3's plugin flag and the
+  1.7 structure changes). Released ConditionEngine DLLs are built with such a CommonLib (MIT); it is not part of this
+  repository.
 - Build: `cmake --preset build-release-msvc`, then `cmake --build build/release-msvc`; the post-build step copies the
   DLL to `contrib/Distribution/PluginRelease/` (No Talk Just Hands bundles it from there, `CONDITIONENGINE_DIST`).
 - Papyrus (`ConditionEngine.psc`): `Release.ppj` imports the SKSE / Skyrim script sources from the parent project's
