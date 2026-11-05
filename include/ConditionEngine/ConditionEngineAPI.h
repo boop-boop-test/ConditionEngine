@@ -385,6 +385,42 @@ CONDITIONENGINE_API int32_t ConditionEngine_ReadValueWatch(CE_WatchHandle watch,
 /// Main thread: samples now, then returns it like ReadValueWatch. 0 when unknown / world not loaded.
 CONDITIONENGINE_API int32_t ConditionEngine_RefreshValueWatch(CE_WatchHandle watch, CE_ValueSample* out);
 
+// ── Dials ────────────────────────────────────────────────────────────────────
+// A dial is a value that rules drive (docs/dials.md): events turn it on and off, conditions set
+// it, rates move it over time. Each dial is also the named value $id (pushed by the dial) and may
+// name conditions (@Name). Values are saved with the game; definitions are not: define every
+// session (kDataLoaded is fine), or ship a preset file with a "dials" section.
+// `actor` null = the player; global dials ignore it. Changes reach ConditionEngine, the
+// Dials_Changed mod event and subscribers on the next main-thread task.
+
+/// Defines (or replaces) a dial from its JSON object:
+///   {"label": "Alarm", "range": [0, 10], "rules": [{"when": "Combat", "set": 10},
+///                                                   {"while": "!Combat", "rate": -1}]}
+/// `owner` names your mod (Dials_RemoveOwner removes yours). Errors, newline-separated, go to errorBuf.
+/// CE_ERR_PARSE for an invalid definition.
+CONDITIONENGINE_API CE_Result ConditionEngine_DefineDial(const char* id, const char* json, const char* owner,
+                                                         char* errorBuf, uint32_t errorBufSize);
+CONDITIONENGINE_API CE_Result ConditionEngine_RemoveDial(const char* id);
+CONDITIONENGINE_API uint32_t ConditionEngine_RemoveDialOwner(const char* owner);
+/// The dial's value for the actor (its default when the actor has none). CE_ERR_NOT_FOUND.
+CONDITIONENGINE_API CE_Result ConditionEngine_GetDial(const char* id, void* actor, double* outValue);
+CONDITIONENGINE_API CE_Result ConditionEngine_SetDial(const char* id, void* actor, double value);
+CONDITIONENGINE_API CE_Result ConditionEngine_AddDial(const char* id, void* actor, double delta);
+CONDITIONENGINE_API CE_Result ConditionEngine_ResetDial(const char* id, void* actor);
+/// Fires the rules listening for `eventName` ({"event": "..."}) as if a mod event with this text
+/// and number came from `actor`.
+CONDITIONENGINE_API void ConditionEngine_SignalDials(const char* eventName, void* actor, double number, const char* text);
+/// JSON: {"dials": [{id, origin, source, label, category, kind, scope, min, max, value, actors, json,
+/// errors, ...}], "log": [...], "userConditions", "userValues"}
+CONDITIONENGINE_API uint32_t ConditionEngine_GetDialsSnapshot(char* buf, uint32_t bufSize);
+/// Called on the main thread after a dial's value changed (`actor` null for global dials).
+typedef void (*CE_DialChangedFn)(const char* id, void* actor, double value, double previous, void* userData);
+CONDITIONENGINE_API uint32_t ConditionEngine_SubscribeDials(CE_DialChangedFn fn, void* userData);
+CONDITIONENGINE_API void ConditionEngine_UnsubscribeDials(uint32_t subscription);
+/// Opens the ConditionEngine editor (Magelight UI) at a dial, condition or value (may be null).
+/// 1 when it could open.
+CONDITIONENGINE_API int32_t ConditionEngine_OpenEditor(const char* id);
+
 // ── Cost counters ────────────────────────────────────────────────────────────
 
 /// JSON, any thread:

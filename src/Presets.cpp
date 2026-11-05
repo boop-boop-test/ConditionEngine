@@ -53,7 +53,9 @@ namespace ConditionEngine {
         const bool hasValues = root.is_object() && root.contains("values") && root["values"].is_object();
         const bool hasCategories = root.is_object() && root.contains("categories") && root["categories"].is_array();
         const bool hasWeathers = root.is_object() && root.contains("weathers");
+        const bool hasDials = root.is_object() && root.contains("dials");  // read by the dials (src/Dials/Service.cpp)
         if (!hasConditions && !hasValues && !hasCategories && !hasWeathers) {
+            if (hasDials) return 0;
             SKSE::log::warn("ConditionEngine: preset '{}' has no \"conditions\", \"values\", \"categories\" or \"weathers\"",
                             source);
             return 0;

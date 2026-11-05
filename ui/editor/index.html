@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ConditionEngine</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <aside id="side">
+    <header class="brand">
+      <span class="brand-mark">◉</span>
+      <div>
+        <h1>ConditionEngine</h1>
+        <p class="sub">dials, conditions, values</p>
+      </div>
+      <button id="close" class="icon" title="Close (Esc)">✕</button>
+    </header>
+    <div class="tabs">
+      <button class="tab active" data-tab="dials">Dials</button>
+      <button class="tab" data-tab="conditions">Conditions</button>
+      <button class="tab" data-tab="values">Values</button>
+    </div>
+    <div class="side-tools">
+      <input id="search" type="search" placeholder="Find a dial…" autocomplete="off">
+      <div class="new-wrap">
+        <button id="new" class="primary">+ New dial</button>
+        <div id="templates" class="menu hidden"></div>
+      </div>
+    </div>
+    <div id="list"></div>
+    <div id="status" class="status"></div>
+    <div id="sn-status" class="status"></div>
+  </aside>
+
+  <main id="main">
+    <div id="empty" class="empty">
+      <h2>Make a value that changes on its own</h2>
+      <p>A dial is a number. Rules move it: an event switches it on, a condition sets it, a rate wears it down every second.
+         Every dial is also a ConditionEngine value (<code>$name</code>), so outfits, faces and anything else that reads
+         conditions can react to it.</p>
+      <p>Pick one on the left, or start from an idea:</p>
+      <div id="ideas" class="ideas"></div>
+    </div>
+
+    <div id="editor" class="hidden">
+      <div class="ed-head">
+        <div class="ed-title">
+          <input id="f-label" class="title-input" placeholder="Label">
+          <div class="ed-meta">
+            <span class="dollar">$</span><input id="f-id" class="id-input" placeholder="name" spellcheck="false">
+            <span id="origin" class="badge"></span>
+          </div>
+        </div>
+        <div class="ed-actions">
+          <button id="mode" title="Edit as JSON">{ } JSON</button>
+          <button id="duplicate">Duplicate</button>
+          <button id="revert" class="danger">Delete</button>
+          <button id="save" class="primary">Save</button>
+        </div>
+      </div>
+
+      <div id="messages"></div>
+
+      <section id="live" class="card live">
+        <div class="live-row">
+          <div class="live-value"><span id="live-number">0</span><span id="live-unit"></span></div>
+          <div class="bar"><div id="live-bar"></div></div>
+        </div>
+        <div class="live-row controls">
+          <input id="live-slider" type="range" min="0" max="100" step="1">
+          <button id="live-reset">Reset</button>
+          <button id="live-toggle">Toggle</button>
+          <button id="live-cycle">Next</button>
+          <span class="hint" id="live-who"></span>
+        </div>
+        <div id="live-actors"></div>
+      </section>
+
+      <div id="form">
+        <section class="card">
+          <h3>What it is</h3>
+          <div class="grid">
+            <label>Kind
+              <select id="f-kind">
+                <option value="number">Number</option>
+                <option value="toggle">Toggle (on / off)</option>
+                <option value="choice">Choice (named options)</option>
+              </select>
+            </label>
+            <label class="when-number">Min <input id="f-min" type="number" step="any"></label>
+            <label class="when-number">Max <input id="f-max" type="number" step="any"></label>
+            <label>Default <input id="f-default" type="text"></label>
+            <label class="when-number">Unit <input id="f-unit" placeholder="%, hours…"></label>
+            <label class="check when-number"><input id="f-integer" type="checkbox"> Whole numbers</label>
+          </div>
+          <div id="options-box" class="when-choice">
+            <h4>Options</h4>
+            <div id="options"></div>
+            <button id="add-option" class="small">+ Option</button>
+          </div>
+          <label class="wide">Description <input id="f-description" placeholder="What it means, for whoever reads the list"></label>
+          <div class="grid">
+            <label>Category <input id="f-category" list="categories" placeholder="dials"></label>
+            <label>Icon <input id="f-icon" placeholder="optional"></label>
+          </div>
+        </section>
+
+        <section class="card">
+          <h3>Who has it</h3>
+          <div class="grid">
+            <label>Scope
+              <select id="f-scope">
+                <option value="global">Global: one value for the whole game</option>
+                <option value="player">Player only: the player's own</option>
+                <option value="actor">Per actor: each actor has their own</option>
+              </select>
+            </label>
+            <label class="check"><input id="f-persist" type="checkbox"> Saved with the game</label>
+          </div>
+          <label class="wide when-actor">Actors that have it
+            <span class="expr-wrap"><input id="f-track" class="expr" list="names" placeholder="IsPlayer || IsFollower, true for everyone, !IsPlayer for NPCs"><button class="why" data-for="f-track" title="Why is this true or false right now?">?</button></span>
+          </label>
+          <details>
+            <summary>Advanced</summary>
+            <div class="grid">
+              <label>Thresholds <input id="f-thresholds" placeholder="25, 50, 75"></label>
+              <label>Precision <input id="f-precision" type="number" step="any" placeholder="auto"></label>
+              <label>Feeds values <input id="f-provides" placeholder="hunger, cold"></label>
+              <label>Priority <input id="f-priority" type="number" placeholder="50"></label>
+              <label class="check"><input id="f-enabled" type="checkbox"> Enabled</label>
+            </div>
+            <p class="hint">Thresholds: a change across one sends Dials_Changed even when a rate moves it.
+              Feeds: this dial becomes a source of those combined values (e.g. $hunger for players without a survival mod).</p>
+          </details>
+        </section>
+
+        <section class="card">
+          <div class="card-head"><h3>Rules</h3><button id="add-rule" class="small primary">+ Rule</button></div>
+          <p class="hint">Each rule: <b>when</b> something happens, <b>do</b> something to the dial. Rules run top to bottom.</p>
+          <div id="rules"></div>
+        </section>
+
+        <section class="card">
+          <div class="card-head"><h3>Conditions it names</h3><button id="add-condition" class="small">+ Condition</button></div>
+          <p class="hint">Named conditions any mod can use as <code>@Name</code>. Write <code>&gt;= 75</code> to compare this dial, an option
+            label, or a full expression.</p>
+          <div id="conditions"></div>
+        </section>
+
+        <section class="card">
+          <h3>Use it</h3>
+          <p class="hint">Copy a line into a SkyrimNet prompt, a ConditionEngine expression or a script. Save first.</p>
+          <div id="dial-snippets"></div>
+        </section>
+      </div>
+
+      <section id="json-box" class="card hidden">
+        <h3>JSON</h3>
+        <textarea id="json" spellcheck="false"></textarea>
+      </section>
+    </div>
+    <div id="named" class="hidden">
+      <div class="ed-head">
+        <div class="ed-title">
+          <div class="ed-meta big"><span id="n-sigil" class="dollar">@</span><input id="n-name" class="id-input title" placeholder="Name" spellcheck="false"></div>
+          <div class="ed-meta"><span id="n-origin" class="badge"></span></div>
+        </div>
+        <div class="ed-actions">
+          <button id="n-explain">Why, right now?</button>
+          <button id="n-copy">Make my own copy</button>
+          <button id="n-delete" class="danger">Delete</button>
+          <button id="n-save" class="primary">Save</button>
+        </div>
+      </div>
+      <div id="n-messages"></div>
+      <section class="card">
+        <label class="wide"><span id="n-expr-label">Expression</span>
+          <textarea id="n-expr" class="expr" rows="3" spellcheck="false" placeholder="Combat &amp;&amp; $hunger > 50"></textarea>
+        </label>
+        <div class="grid">
+          <label>Label <input id="n-label"></label>
+          <label>Category <input id="n-category" list="categories"></label>
+        </div>
+        <label class="wide">Description <input id="n-description"></label>
+        <div class="grid n-value-only">
+          <label>Unit <input id="n-unit" placeholder="%"></label>
+          <label>Min <input id="n-min" type="number" step="any"></label>
+          <label>Max <input id="n-max" type="number" step="any"></label>
+          <label>Feeds values <input id="n-provides" placeholder="hunger"></label>
+          <label>Priority <input id="n-priority" type="number" placeholder="50"></label>
+        </div>
+        <label class="wide n-condition-only">What NPCs know while it is true (SkyrimNet world knowledge)
+          <textarea id="n-knowledge" rows="3" placeholder="You are in a manic phase: restless, talking fast, jumping between ideas."></textarea>
+        </label>
+        <pre id="n-why" class="why-box hidden"></pre>
+      </section>
+      <section class="card">
+        <h3>Use it</h3>
+        <div id="n-snippets"></div>
+      </section>
+    </div>
+  </main>
+
+  <aside id="activity">
+    <h3>Activity</h3>
+    <div id="log"></div>
+    <div class="signal">
+      <h4>Send an event</h4>
+      <input id="sig-name" placeholder="Event name" list="event-names">
+      <div class="row"><input id="sig-number" type="number" placeholder="number" step="any"><button id="sig-send">Send</button></div>
+    </div>
+  </aside>
+</div>
+
+<datalist id="names"></datalist>
+<datalist id="categories"></datalist>
+<datalist id="event-names"></datalist>
+<datalist id="skyrimnet-events"><option value="dialogue"><option value="dialogue_player_text"><option value="dialogue_player_stt"><option value="combat"><option value="hit"><option value="death"><option value="activation"><option value="spell_cast"><option value="equip"></datalist>
+<div id="explain" class="explain hidden"><pre id="explain-text"></pre><button id="explain-close" class="small">Close</button></div>
+
+<script src="templates.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

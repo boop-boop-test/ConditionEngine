@@ -14,6 +14,8 @@
 #include "ConditionEngine/Weather/WeatherProfiles.h"
 #include "ConditionEngine/Conditions/GearConditions.h"
 #include "ConditionEngine/Gear/ArmorProtection.h"
+#include "Dials/Console.h"
+#include "Dials/Editor.h"
 
 #include <algorithm>
 #include <format>
@@ -35,6 +37,8 @@ namespace ConditionEngine::Console {
             "ce stats [on|off|reset]         evaluation counters and timings\n"
             "ce weather                      the current weather and what it counts as\n"
             "ce warmth                       what the actor's worn armor adds to warmth and coverage\n"
+            "ce dials [help]                 dials: list, set, signal, log, what SkyrimNet reads\n"
+            "ce ui [name]                    open the editor (dials, conditions, values)\n"
             "Quote expressions with commas: ce eval \"Time(20, 6) && $hunger > 50\"";
 
         std::string Lower(std::string s) {
@@ -318,6 +322,10 @@ namespace ConditionEngine::Console {
                 WeatherCommand();
             } else if (sub == "warmth" || sub == "gear") {
                 WarmthCommand(DefaultActor());
+            } else if (sub == "dials" || sub == "dial" || sub == "d") {
+                Dials::Console::Run(rest);
+            } else if (sub == "ui" || sub == "editor") {
+                Editor::Open(NextWord(rest));
             } else {
                 Print("ce: unknown '" + sub + "'");
                 Print(kUsage);

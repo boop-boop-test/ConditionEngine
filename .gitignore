@@ -12,3 +12,6 @@ _deps/
 contrib/Distribution/**/*.dll
 contrib/Distribution/**/*.pdb
 contrib/*.zip
+
+# Copied from ui/editor by the build
+contrib/Distribution/Magelight/

@@ -13,6 +13,8 @@ overview; `include/ConditionEngine/ConditionEngineAPI.h` and `ConditionEngine.ps
 | [Values](values.md) | Reading numbers, pushing values, named values, value types and value watches |
 | [OAR conditions](oar-conditions.md) | Using presets and expressions in Open Animation Replacer submods |
 | [Survival needs](survival.md) | The built-in `$hunger`, `$fatigue`, `$cold`, `$warmth`, `$coverage`, `$dirt`, `$blood`: which mod answers, the shared scale, adding a source |
+| [Dials](dials.md) | Values that rules drive: events, conditions, rates, timers, keys; per actor; saved; the editor |
+| [SkyrimNet](skyrimnet.md) | `get_dials()` and `condition_engine()` in prompts; SkyrimNet events, memories, world knowledge and AI actions from dials |
 | [Weather](weather.md) | The built-in weather values and conditions: how any weather mod's weathers are read, tested mods, correcting a weather |
 
 All examples use the C API, which works from any SKSE plugin whatever its compiler, CRT or JSON library. A host that

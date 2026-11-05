@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 project(
     ConditionEngine
-    VERSION 1.4.0
+    VERSION 1.5.0
     DESCRIPTION "Reusable condition/expression evaluator for Skyrim SKSE plugins."
     LANGUAGES CXX)
 
@@ -201,6 +201,20 @@ set(CONDITION_ENGINE_DLL_SOURCES
     src/OAR/OpenAnimationReplacerAPI-Conditions.cpp
     src/Papyrus.cpp
     src/Plugin.cpp
+    # Dials, the editor and SkyrimNet (DLL only: a host that links the static library has its own)
+    src/Dials/Api.cpp
+    src/Dials/CEApi.cpp
+    src/Dials/Console.cpp
+    src/Dials/Definition.cpp
+    src/Dials/Editor.cpp
+    src/Dials/Engine.cpp
+    src/Dials/Events.cpp
+    src/Dials/GameHost.cpp
+    src/Dials/Papyrus.cpp
+    src/Dials/Serialization.cpp
+    src/Dials/Service.cpp
+    src/Dials/Settings.cpp
+    src/SkyrimNet/Bridge.cpp
 )
 
 # When consumed by a parent project, build as static lib.
@@ -251,7 +265,9 @@ source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES
 ###############################################################################
 option(CONDITIONENGINE_BUILD_TESTS "Build ConditionEngine unit tests" ${PROJECT_IS_TOP_LEVEL})
 if(PROJECT_IS_TOP_LEVEL AND CONDITIONENGINE_BUILD_TESTS)
-    add_executable(condition-engine-tests tests/ExpressionTests.cpp tests/ValueTests.cpp tests/WeatherTests.cpp tests/GearTests.cpp tests/Benchmark.cpp ${CONDITION_ENGINE_SOURCES})
+    add_executable(condition-engine-tests tests/ExpressionTests.cpp tests/ValueTests.cpp tests/WeatherTests.cpp tests/GearTests.cpp
+        tests/DialsTests.cpp tests/Benchmark.cpp src/Dials/Definition.cpp src/Dials/Engine.cpp ${CONDITION_ENGINE_SOURCES})
+    target_compile_definitions(condition-engine-tests PRIVATE DIALS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
     target_compile_definitions(condition-engine-tests PRIVATE CONDITIONENGINE_STATIC)
     target_include_directories(condition-engine-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include "${CONDITIONENGINE_GENERATED_DIR}")
     target_link_libraries(condition-engine-tests PRIVATE CommonLibSSE::CommonLibSSE spdlog::spdlog)
@@ -279,6 +295,10 @@ if(PROJECT_IS_TOP_LEVEL)
 
     add_custom_command(TARGET condition-engine-lib POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory "${DIST_DIR}/Plugin${BUILD_NAME}/")
+    # The editor page (Magelight UI), laid out as the installed mod
+    add_custom_command(TARGET condition-engine-lib POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_CURRENT_SOURCE_DIR}/ui/editor"
+                "${DIST_DIR}/Magelight/ConditionEngine/views/editor")
     add_custom_command(TARGET condition-engine-lib POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy
             $<TARGET_FILE:condition-engine-lib>
