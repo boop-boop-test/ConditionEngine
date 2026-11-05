@@ -32,6 +32,7 @@
     <div id="list"></div>
     <div id="status" class="status"></div>
     <div id="sn-status" class="status"></div>
+    <div id="key-row" class="status key-row">Open with <b id="key-name">F10</b> <button id="key-change" class="small">Change</button></div>
   </aside>
 
   <main id="main">
@@ -218,6 +219,15 @@
 <datalist id="categories"></datalist>
 <datalist id="event-names"></datalist>
 <datalist id="skyrimnet-events"><option value="dialogue"><option value="dialogue_player_text"><option value="dialogue_player_stt"><option value="combat"><option value="hit"><option value="death"><option value="activation"><option value="spell_cast"><option value="equip"></datalist>
+<div id="key-panel" class="key-panel hidden">
+  <h4>Open the editor with</h4>
+  <button id="key-capture" class="wide-button">Press a key…</button>
+  <label>or pick one <select id="key-select"></select></label>
+  <label class="check"><input id="key-pause" type="checkbox"> Pause the game while it is open</label>
+  <p id="key-note" class="hint"></p>
+  <div id="key-messages"></div>
+  <div class="row end"><button id="key-cancel">Cancel</button><button id="key-save" class="primary">Save</button></div>
+</div>
 <div id="explain" class="explain hidden"><pre id="explain-text"></pre><button id="explain-close" class="small">Close</button></div>
 
 <script src="templates.js"></script>

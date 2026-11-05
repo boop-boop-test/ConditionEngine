@@ -2,6 +2,7 @@
 #include "CEApi.h"
 #include "Service.h"
 #include "Settings.h"
+#include "InputManagerAPI.h"
 #include "MagelightUI_API.h"
 #include "../SkyrimNet/Bridge.h"
 
@@ -36,7 +37,13 @@ namespace ConditionEngine::Editor {
             if (g_api && g_view) g_api->InteropCall(g_view, channel, payload.c_str());
         }
 
-        void SendState() { Send("dials_state", Service::Get().Snapshot().dump()); }
+        nlohmann::json HotkeyStatus();
+
+        void SendState() {
+            auto snapshot = Service::Get().Snapshot();
+            snapshot.update(HotkeyStatus());
+            Send("dials_state", snapshot.dump());
+        }
 
         void SendLive(bool force) {
             if (!g_open.load()) return;
@@ -63,6 +70,202 @@ namespace ConditionEngine::Editor {
                 return 0;
             }
         }
+
+        // ── The key that opens the editor ────────────────────────────────────
+        // With InputManager it is an InputManager action the player rebinds there (gamepad too); without it
+        // Magelight binds the keyboard key. The player's pick in the editor (User.json "editor") wins over the ini.
+        enum class Via { None, InputManager, Magelight };
+        constexpr const char* kInputManagerAction = "ConditionEngine_OpenEditor";
+        constexpr const char* kInputManagerOwner = "ConditionEngine";
+
+        Via g_via = Via::None;
+        std::uint32_t g_key = 0;  // DirectInput scan code, 0 = none
+        bool g_pause = true;
+        int g_imAction = -1;
+        std::string g_keyError;
+
+        std::uint32_t EffectiveKey() {
+            const auto prefs = Service::Get().EditorPrefs();
+            if (auto it = prefs.find("hotkey"); it != prefs.end() && it->is_string()) {
+                return it->get<std::string>().empty() ? 0 : ParseKey(*it);
+            }
+            return Dials::GetSettings().editorKey;
+        }
+
+        bool EffectivePause() {
+            const auto prefs = Service::Get().EditorPrefs();
+            if (auto it = prefs.find("pauseGame"); it != prefs.end() && it->is_boolean()) return it->get<bool>();
+            return Dials::GetSettings().pauseGame;
+        }
+
+        // DirectInput scan codes <-> the virtual keys InputManager stores (extended keys carry 0x80 / an E0 prefix)
+        std::uint32_t VirtualKeyOf(std::uint32_t dx) {
+            if (!dx) return 0;
+            const UINT scan = (dx & 0x80) ? (0xE000u | (dx & 0x7F)) : dx;
+            return MapVirtualKeyW(scan, MAPVK_VSC_TO_VK_EX);
+        }
+
+        std::uint32_t ScanCodeOf(std::uint32_t vk) {
+            if (!vk) return 0;
+            const UINT scan = MapVirtualKeyW(vk, MAPVK_VK_TO_VSC_EX);
+            return (scan & 0xFF) | ((scan >> 8) == 0xE0 ? 0x80u : 0u);
+        }
+
+        InputManagerAPI::IInputManager* InputManager() {
+            return InputManagerAPI::_API ? InputManagerAPI::_API : InputManagerAPI::RequestAPIDirect();
+        }
+
+        bool SetInputManagerKey(std::uint32_t dx) {
+            auto* im = InputManager();
+            if (!im || g_imAction < 0) return false;
+            auto info = im->GetActionInfo(g_imAction);
+            info.id = g_imAction;
+            info.pcMainKey = VirtualKeyOf(dx);
+            info.isValid = true;
+            return im->UpdateActionMapping(g_imAction, info);
+        }
+
+        void SetupInputManager() {
+            auto* im = InputManager();
+            if (!im) return;
+            for (std::size_t i = 0, n = im->GetInputCount(0); i < n; ++i) {
+                const char* name = im->GetInputName(0, static_cast<int>(i));
+                if (name && std::string_view(name) == kInputManagerAction) g_imAction = static_cast<int>(i);
+            }
+            bool created = false;
+            if (g_imAction < 0) {
+                g_imAction = im->CreateInput(0, kInputManagerAction);
+                created = g_imAction >= 0;
+            }
+            if (g_imAction < 0) {
+                SKSE::log::warn("Editor: InputManager would not create the action {}", kInputManagerAction);
+                return;
+            }
+            im->UpdateListener(0, g_imAction, kInputManagerOwner, "Open the ConditionEngine editor", true);
+            if (created) SetInputManagerKey(EffectiveKey());  // its first binding; the player rebinds it in InputManager
+            g_via = Via::InputManager;
+            SKSE::log::info("Editor: the editor key is InputManager action {} (id {})", kInputManagerAction, g_imAction);
+        }
+
+        // The key InputManager has now (it may have been rebound there)
+        std::uint32_t InputManagerKey(bool& gamepad) {
+            gamepad = false;
+            auto* im = InputManager();
+            if (!im || g_imAction < 0) return 0;
+            const auto info = im->GetActionInfo(g_imAction);
+            gamepad = info.isValid && info.gamepadMainKey != 0;
+            return info.isValid ? ScanCodeOf(info.pcMainKey) : 0;
+        }
+
+        // Magelight: (re)binds the keyboard key and the VR button. False and g_keyError when another mod holds it.
+        bool BindMagelight(std::uint32_t key, bool pause) {
+            if (!g_api || !g_view) return false;
+            g_api->BindHotkey(g_view, 0, ML::kHotkeyActionUnbind);
+            const auto action = pause ? ML::kHotkeyActionToggleUIModePaused : ML::kHotkeyActionToggleUIMode;
+            bool ok = true;
+            if (key) {
+                if (g_api->BindHotkey(g_view, key, action) != ML::Result::Ok) {
+                    g_keyError = KeyName(key) + " is not free: " + std::string(g_api->GetLastErrorMessage(g_mod));
+                    SKSE::log::warn("Editor: {}", g_keyError);
+                    ok = false;
+                }
+            }
+            const auto& s = Dials::GetSettings();
+            if (REL::Module::IsVR() && s.vrButton && g_api->BindVRHotkey) {
+                ML::VRHotkeyDesc vr{};
+                vr.size = sizeof(vr);
+                vr.button = s.vrButton;
+                vr.modifier = s.vrModifier;
+                vr.action = action;
+                if (g_api->BindVRHotkey(g_view, &vr) != ML::Result::Ok) {
+                    SKSE::log::warn("Editor: VR button {} not bound: {}", s.vrButton, g_api->GetLastErrorMessage(g_mod));
+                }
+            }
+            return ok;
+        }
+
+        void ApplyBinding() {
+            g_key = EffectiveKey();
+            g_pause = EffectivePause();
+            g_keyError.clear();
+            if (g_via == Via::InputManager) {
+                BindMagelight(0, g_pause);  // the VR button only: InputManager has the keyboard
+                return;
+            }
+            g_via = BindMagelight(g_key, g_pause) && g_key ? Via::Magelight : Via::None;
+        }
+
+        nlohmann::json HotkeyStatus() {
+            nlohmann::json j;
+            std::uint32_t key = g_key;
+            bool gamepad = false;
+            if (g_via == Via::InputManager) key = InputManagerKey(gamepad);
+            j["editorKey"] = key ? KeyName(key) : "";
+            j["editorKeyVia"] = g_via == Via::InputManager ? "InputManager" : g_via == Via::Magelight ? "Magelight" : "none";
+            j["editorKeyGamepad"] = gamepad;
+            j["editorKeyError"] = g_keyError;
+            j["pauseGame"] = g_pause;
+            return j;
+        }
+
+        Dials::Outcome SetEditorKey(const nlohmann::json& m) {
+            Dials::Outcome o;
+            nlohmann::json prefs = nlohmann::json::object();
+            std::uint32_t key = g_key;
+            if (auto it = m.find("key"); it != m.end() && it->is_string()) {
+                const auto name = it->get<std::string>();
+                key = name.empty() ? 0 : ParseKey(*it);
+                if (!name.empty() && !key) {
+                    o.errors.push_back("unknown key '" + name + "'");
+                    return o;
+                }
+                prefs["hotkey"] = key ? KeyName(key) : "";
+            }
+            const bool pause = m.contains("pauseGame") && m["pauseGame"].is_boolean() ? m["pauseGame"].get<bool>() : g_pause;
+            prefs["pauseGame"] = pause;
+
+            if (g_via == Via::InputManager) {
+                if (prefs.contains("hotkey") && !SetInputManagerKey(key)) {
+                    o.errors.push_back("InputManager did not take the new key; change it in InputManager's menu");
+                    return o;
+                }
+            } else if (!BindMagelight(key, pause)) {
+                o.errors.push_back(g_keyError);
+                BindMagelight(g_key, g_pause);  // the old key back
+                return o;
+            }
+            std::string error;
+            if (!Service::Get().SetEditorPrefs(prefs, error)) o.warnings.push_back(error);
+            ApplyBinding();
+            o.ok = true;
+            return o;
+        }
+
+        // InputManager reports a bound action as a mod event (numArg = action id, strArg = action name)
+        class InputManagerSink final : public RE::BSTEventSink<SKSE::ModCallbackEvent> {
+        public:
+            RE::BSEventNotifyControl ProcessEvent(const SKSE::ModCallbackEvent* e,
+                                                  RE::BSTEventSource<SKSE::ModCallbackEvent>*) override {
+                if (!e || g_imAction < 0 || std::string_view(e->eventName.c_str()) != "InputManager_ActionTriggered") {
+                    return RE::BSEventNotifyControl::kContinue;
+                }
+                const bool ours = static_cast<int>(e->numArg) == g_imAction ||
+                                  std::string_view(e->strArg.c_str()) == kInputManagerAction;
+                if (!ours) return RE::BSEventNotifyControl::kContinue;
+                if (auto* tasks = SKSE::GetTaskInterface()) {
+                    tasks->AddTask([]() {
+                        if (g_open.load()) {
+                            Close();
+                            return;
+                        }
+                        auto* ui = RE::UI::GetSingleton();
+                        if (ui && (ui->GameIsPaused() || ui->IsMenuOpen(RE::Console::MENU_NAME))) return;  // in a menu
+                        Open({});
+                    });
+                }
+                return RE::BSEventNotifyControl::kContinue;
+            }
+        };
 
         // Game thread
         void Handle(const std::string& text) {
@@ -140,6 +343,9 @@ namespace ConditionEngine::Editor {
                 auto status = SkyrimNet::Status();
                 status["dials"] = service.DialsFor(ActorFrom(m) ? ActorFrom(m) : kPlayer);
                 Reply(m, ok, status.dump());
+            } else if (op == "setEditorKey") {
+                Reply(m, SetEditorKey(m));
+                SendState();
             } else if (op == "reload") {
                 service.ReloadFiles();
                 SendState();
@@ -236,13 +442,21 @@ namespace ConditionEngine::Editor {
             return;
         }
         g_api->RegisterJSListenerEx(g_view, "dials", &OnMessage, nullptr);
-        if (const auto key = Dials::GetSettings().editorKey) {
-            const auto action = Dials::GetSettings().pauseGame ? ML::kHotkeyActionToggleUIModePaused : ML::kHotkeyActionToggleUIMode;
-            if (g_api->BindHotkey(g_view, key, action) != ML::Result::Ok) {
-                SKSE::log::warn("Editor: editor hotkey {} not bound: {}", KeyName(key), g_api->GetLastErrorMessage(g_mod));
-            }
-        }
         SKSE::log::info("Editor: editor ready ({})", page);
+    }
+
+    void InstallHotkey() {
+        if (!Available()) return;
+        static InputManagerSink sink;
+        SetupInputManager();
+        if (g_via == Via::InputManager) {
+            if (auto* mods = SKSE::GetModCallbackEventSource()) mods->AddEventSink(&sink);
+        }
+        ApplyBinding();
+        const auto status = HotkeyStatus();
+        SKSE::log::info("Editor: opened by {} ({})",
+                        status["editorKey"].get<std::string>().empty() ? "no key" : status["editorKey"].get<std::string>(),
+                        status["editorKeyVia"].get<std::string>());
     }
 
     bool Available() { return g_api && g_view; }
@@ -254,7 +468,7 @@ namespace ConditionEngine::Editor {
         }
         g_focus = dial;
         g_api->ShowView(g_view, true);
-        const auto flags = Dials::GetSettings().pauseGame ? ML::kUIModeFlagPause : ML::kUIModeFlagNone;
+        const auto flags = g_pause ? ML::kUIModeFlagPause : ML::kUIModeFlagNone;
         if (g_api->RequestUIMode(g_view, flags) != ML::Result::Ok) {
             SKSE::log::warn("Editor: the editor could not take the UI: {}", g_api->GetLastErrorMessage(g_mod));
             g_api->ShowView(g_view, false);

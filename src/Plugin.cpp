@@ -68,6 +68,7 @@ namespace {
                     tasks->AddTask([]() {
                         auto& dials = ConditionEngine::Dials::Service::Get();
                         dials.Start();
+                        ConditionEngine::Editor::InstallHotkey();
                         dials.onTick = [] { ConditionEngine::SkyrimNet::Tick(); };
                         ConditionEngine::SkyrimNet::Install();
                     });

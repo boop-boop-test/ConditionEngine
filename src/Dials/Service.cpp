@@ -147,6 +147,7 @@ namespace ConditionEngine::Dials {
         CE::Get().UnregisterOwner(kUserOwner);
         userConditions_.clear();
         userValues_.clear();
+        editorPrefs_ = nlohmann::json::object();
         std::error_code ec;
         if (!std::filesystem::exists(UserFile(), ec)) return;
         std::string error;
@@ -155,6 +156,7 @@ namespace ConditionEngine::Dials {
             fileErrors_.push_back("User/User.json: " + error);
             return;
         }
+        if (const auto* editor = SectionOf(file, "editor")) editorPrefs_ = *editor;
         if (const auto* dials = DialsOf(file)) {
             for (const auto& [id, j] : dials->items()) {
                 if (id.starts_with('_') || id.starts_with('$')) continue;
@@ -192,6 +194,7 @@ namespace ConditionEngine::Dials {
                                {"dials", dials},
                                {"conditions", conditions},
                                {"values", values}};
+        if (!editorPrefs_.empty()) file["editor"] = editorPrefs_;
         std::error_code ec;
         std::filesystem::create_directories(UserFile().parent_path(), ec);
         const auto temp = UserFile().string() + ".tmp";
@@ -857,6 +860,17 @@ namespace ConditionEngine::Dials {
             return true;
         }
         return false;
+    }
+
+    nlohmann::json Service::EditorPrefs() {
+        std::lock_guard lock(mutex_);
+        return editorPrefs_;
+    }
+
+    bool Service::SetEditorPrefs(const nlohmann::json& prefs, std::string& error) {
+        std::lock_guard lock(mutex_);
+        for (const auto& [key, value] : prefs.items()) editorPrefs_[key] = value;
+        return WriteUserFile(error);
     }
 
     void Service::DefinitionsChanged() {

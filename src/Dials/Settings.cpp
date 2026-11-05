@@ -1,4 +1,5 @@
 #include "Settings.h"
+#include "Definition.h"
 
 #include <windows.h>
 
@@ -41,17 +42,29 @@ namespace ConditionEngine::Dials {
         }
     }
 
+    namespace {
+        // A number (0x44, 68) or a key name (F10); missing = the fallback, unreadable = 0
+        std::uint32_t ReadKey(const char* section, const char* key, std::uint32_t fallback) {
+            const auto s = ReadString(section, key, "");
+            if (s.empty()) return fallback;
+            try {
+                std::size_t used = 0;
+                const auto v = std::stoul(s, &used, 0);
+                if (used == s.size()) return static_cast<std::uint32_t>(v) & 0xFF;
+            } catch (...) {
+            }
+            return ParseKey(nlohmann::json(s));
+        }
+    }
+
     Settings LoadSettings() {
         Settings s;
         s.tickMs = std::clamp(static_cast<int>(ReadDouble("Dials", "iTickMs", s.tickMs)), 50, 2000);
         s.maxCatchUpHours = std::max(0.0, ReadDouble("Dials", "fMaxCatchUpHours", s.maxCatchUpHours));
         s.trackInterval = std::clamp(ReadDouble("Dials", "fTrackSeconds", s.trackInterval), 0.1, 60.0);
-        const auto key = ReadString("Editor", "iHotkey", "0");
-        try {
-            s.editorKey = static_cast<std::uint32_t>(std::stoul(key, nullptr, 0)) & 0xFF;
-        } catch (...) {
-            s.editorKey = 0;
-        }
+        s.editorKey = ReadKey("Editor", "iHotkey", s.editorKey);
+        s.vrButton = ReadKey("Editor", "iVRButton", 0);
+        s.vrModifier = ReadKey("Editor", "iVRModifier", 0);
         s.pauseGame = ReadBool("Editor", "bPauseGame", s.pauseGame);
         s.verbose = ReadBool("Dials", "bVerbose", s.verbose);
         s.skyrimNet = ReadBool("SkyrimNet", "bEnable", s.skyrimNet);

@@ -185,8 +185,8 @@
     const n = state.dials.filter((d) => d.live).length;
     const errs = (state.fileErrors || []).length;
     s.textContent = n + ' live dial' + (n === 1 ? '' : 's') + (state.inGame === false ? ' · no game loaded' : '') +
-      (errs ? ' · ' + errs + ' file problem' + (errs === 1 ? '' : 's') : '') +
-      (state.editorKey ? ' · ' + state.editorKey + ' opens this' : '');
+      (errs ? ' · ' + errs + ' file problem' + (errs === 1 ? '' : 's') : '');
+    renderKeyRow();
     s.title = (state.fileErrors || []).join('\n');
   }
 
@@ -1235,6 +1235,124 @@
     });
   }
 
+  // ── The key that opens the editor ──────────────────────────────────────────
+  const KEY_CHOICES = ['F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'F9', 'F10', 'F11', 'F12', 'Insert', 'Delete', 'Home', 'End',
+    'PageUp', 'PageDown', 'Num0', 'Num1', 'Num2', 'Num3', 'Num4', 'Num5', 'Num6', 'Num7', 'Num8', 'Num9', 'NumDivide',
+    'NumMultiply', 'NumMinus', 'NumPlus', 'NumPeriod', 'Tilde', 'Backslash']
+    .concat('ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('')).concat('0123456789'.split(''));
+  // KeyboardEvent.code -> the names ConditionEngine's ParseKey knows
+  const CODE_NAMES = {
+    Escape: 'Esc', Backquote: 'Tilde', Minus: 'Minus', Equal: 'Equals', Backspace: 'Backspace', Tab: 'Tab',
+    BracketLeft: 'LeftBracket', BracketRight: 'RightBracket', Enter: 'Enter', ControlLeft: 'LeftCtrl', Semicolon: 'Semicolon',
+    Quote: 'Apostrophe', ShiftLeft: 'LeftShift', Backslash: 'Backslash', Comma: 'Comma', Period: 'Period', Slash: 'Slash',
+    ShiftRight: 'RightShift', NumpadMultiply: 'NumMultiply', AltLeft: 'LeftAlt', Space: 'Space', CapsLock: 'CapsLock',
+    NumLock: 'NumLock', ScrollLock: 'ScrollLock', NumpadSubtract: 'NumMinus', NumpadAdd: 'NumPlus', NumpadDecimal: 'NumPeriod',
+    NumpadEnter: 'NumEnter', ControlRight: 'RightCtrl', NumpadDivide: 'NumDivide', AltRight: 'RightAlt', Home: 'Home',
+    ArrowUp: 'Up', PageUp: 'PageUp', ArrowLeft: 'Left', ArrowRight: 'Right', End: 'End', ArrowDown: 'Down',
+    PageDown: 'PageDown', Insert: 'Insert', Delete: 'Delete'
+  };
+  // keyCode fallback, for a host without KeyboardEvent.code
+  const KEYCODE_NAMES = { 27: 'Esc', 192: 'Tilde', 9: 'Tab', 13: 'Enter', 32: 'Space', 45: 'Insert', 46: 'Delete', 36: 'Home',
+    35: 'End', 33: 'PageUp', 34: 'PageDown', 37: 'Left', 38: 'Up', 39: 'Right', 40: 'Down', 106: 'NumMultiply', 107: 'NumPlus',
+    109: 'NumMinus', 110: 'NumPeriod', 111: 'NumDivide', 220: 'Backslash' };
+
+  function keyNameOf(e) {
+    const code = e.code || '';
+    if (CODE_NAMES[code]) return CODE_NAMES[code];
+    let m = /^Key([A-Z])$/.exec(code);
+    if (m) return m[1];
+    m = /^Digit([0-9])$/.exec(code);
+    if (m) return m[1];
+    m = /^Numpad([0-9])$/.exec(code);
+    if (m) return 'Num' + m[1];
+    if (/^F([1-9]|1[0-2])$/.test(code)) return code;
+    const k = e.keyCode || e.which || 0;
+    if (KEYCODE_NAMES[k]) return KEYCODE_NAMES[k];
+    if (k >= 112 && k <= 123) return 'F' + (k - 111);
+    if (k >= 65 && k <= 90) return String.fromCharCode(k);
+    if (k >= 48 && k <= 57) return String.fromCharCode(k);
+    if (k >= 96 && k <= 105) return 'Num' + (k - 96);
+    return '';
+  }
+
+  let keyPick = '';         // the key chosen in the panel ('' = none)
+  let capturing = false;
+
+  function renderKeyRow() {
+    const name = state.editorKey || '';
+    $('key-name').textContent = name || 'no key';
+    $('key-row').title = state.editorKeyVia === 'InputManager' ? 'Bound in InputManager' : '';
+    $('key-row').classList.toggle('bad', !!state.editorKeyError);
+  }
+
+  function setKeyPick(name) {
+    keyPick = name;
+    const sel = $('key-select');
+    if (name && !Array.prototype.some.call(sel.options, (o) => o.value === name)) {
+      const o = el('option', '', name);
+      o.value = name;
+      sel.appendChild(o);
+    }
+    sel.value = name;
+    $('key-capture').textContent = name ? name + '  (press another to change)' : 'Press a key…';
+  }
+
+  function openKeyPanel() {
+    const sel = $('key-select');
+    if (!sel.options.length) {
+      const none = el('option', '', 'none (console: ce ui)');
+      none.value = '';
+      sel.appendChild(none);
+      for (const k of KEY_CHOICES) { const o = el('option', '', k); o.value = k; sel.appendChild(o); }
+    }
+    setKeyPick(state.editorKey || '');
+    $('key-pause').checked = state.pauseGame !== false;
+    const notes = [];
+    if (state.editorKeyVia === 'InputManager') {
+      notes.push('InputManager handles this key, so it can be rebound in InputManager\'s menu too (a gamepad button as well).');
+      if (state.editorKeyGamepad) notes.push('A gamepad button is bound in InputManager as well.');
+    } else {
+      notes.push('Works anywhere outside menus, and closes the editor again.');
+    }
+    if (state.editorKeyError) notes.push(state.editorKeyError);
+    $('key-note').textContent = notes.join(' ');
+    $('key-messages').innerHTML = '';
+    capturing = false;
+    $('key-panel').classList.remove('hidden');
+  }
+
+  function closeKeyPanel() {
+    capturing = false;
+    $('key-panel').classList.add('hidden');
+  }
+
+  $('key-change').addEventListener('click', openKeyPanel);
+  $('key-cancel').addEventListener('click', closeKeyPanel);
+  $('key-select').addEventListener('change', () => setKeyPick($('key-select').value));
+  $('key-capture').addEventListener('click', () => {
+    capturing = true;
+    $('key-capture').textContent = 'Press a key… (Esc: never mind)';
+  });
+  document.addEventListener('keydown', (e) => {
+    if (!capturing) return;
+    e.preventDefault();
+    e.stopPropagation();
+    capturing = false;
+    if (e.key === 'Escape' || e.code === 'Escape') { setKeyPick(keyPick); return; }
+    const name = keyNameOf(e);
+    if (name) setKeyPick(name);
+    else $('key-capture').textContent = 'That key cannot be used; pick one from the list';
+  }, true);
+  $('key-save').addEventListener('click', () => {
+    request('setEditorKey', { key: keyPick, pauseGame: $('key-pause').checked }).then((res) => {
+      const box = $('key-messages');
+      box.innerHTML = '';
+      for (const e of res.errors || []) box.appendChild(el('div', 'msg error', e));
+      for (const w of res.warnings || []) box.appendChild(el('div', 'msg warn', w));
+      if (res.ok) closeKeyPanel();
+    });
+  });
+
   // ── Wiring ─────────────────────────────────────────────────────────────────
   bindBasics();
   renderTemplates();
@@ -1247,6 +1365,7 @@
   document.addEventListener('click', (e) => { if (!e.target.closest('.new-wrap')) $('templates').classList.add('hidden'); });
   $('close').addEventListener('click', () => { if (confirmLeave()) send('close'); });
   document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !$('key-panel').classList.contains('hidden')) { closeKeyPanel(); e.preventDefault(); return; }
     if (e.key === 'Escape' && !$('explain').classList.contains('hidden')) { $('explain').classList.add('hidden'); e.preventDefault(); }
     if (e.key === 's' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); $('save').click(); }
   });
@@ -1281,6 +1400,8 @@
       if (sample.indexOf(t.id) >= 0) mockDial(t.id, t.json, t.id === 'outfit_mode' ? 'user' : 'file', t.id === 'outfit_mode' ? 'User' : 'Examples');
     }
     const log = [];
+    let editorKey = 'F10';
+    let pauseGame = true;
     const userConditions = { Restless: { expr: '$alarm >= 3 && !Sitting', label: 'Restless', knowledge: 'You cannot sit still; you pace and fidget.' } };
     const userValues = { my_mood: { expr: '100 - $alarm * 10', label: 'Mood', unit: '%' } };
     const mockCatalog = () => ({
@@ -1300,7 +1421,8 @@
       events: ['Load', 'Hit', 'CombatStart', 'CombatEnd', 'Death', 'Kill', 'Equip', 'Unequip', 'SpellCast', 'MagicEffect',
         'Activate', 'ItemAdded', 'ItemRemoved', 'LocationChange', 'SleepStart', 'SleepStop', 'MenuOpen', 'MenuClose',
         'Animation', 'SkillUp'].map((n) => ({ name: n, help: 'browser mock: ' + n })),
-      fileErrors: [], editorKey: 'F10', log: log, userConditions: userConditions, userValues: userValues
+      fileErrors: [], editorKey: editorKey, editorKeyVia: 'Magelight', editorKeyGamepad: false, editorKeyError: '',
+      pauseGame: pauseGame, log: log, userConditions: userConditions, userValues: userValues
     });
     const liveNow = () => ({ values: Object.assign({}, values), actors: {}, log: log, inGame: true });
     setInterval(() => {
@@ -1331,6 +1453,13 @@
             break;
           }
           case 'deleteNamed': delete (m.kind === 'value' ? userValues : userConditions)[m.name]; reply(); emit('dials_state', snapshot()); emit('dials_catalog', mockCatalog()); break;
+          case 'setEditorKey':
+            if (m.key === 'G') { reply({ ok: false, errors: ['G is not free: NoTalkJustHands holds it (browser mock)'] }); break; }
+            editorKey = m.key;
+            pauseGame = m.pauseGame;
+            reply();
+            emit('dials_state', snapshot());
+            break;
           case 'skyrimnet': reply({ text: JSON.stringify({ available: true, version: 12, decorators: ['get_dials', 'condition_engine'], actions: ['calmdown'], events: ['dialogue'], knowledge: 2, problems: [], dials: { alarm: values.alarm, wetness: values.wetness } }) }); break;
           case 'validate': reply(m.json.rules && m.json.rules.some((r) => r.rate !== undefined && r.while === undefined) ? { ok: false, errors: ['rate runs over time, so it needs "while"'] } : {}); break;
           case 'save': {

@@ -77,6 +77,11 @@ namespace ConditionEngine::Dials {
         Outcome SaveUserNamed(bool isValue, const std::string& name, const nlohmann::json& json, const std::string& previousName);
         bool DeleteUserNamed(bool isValue, const std::string& name);
 
+        // ── The editor's own preferences (User.json "editor") ────────────────
+        // {"hotkey": "F10" | "" (none), "pauseGame": bool}; missing keys fall back to the ini
+        nlohmann::json EditorPrefs();
+        bool SetEditorPrefs(const nlohmann::json& prefs, std::string& error);
+
         // ── For SkyrimNet ────────────────────────────────────────────────────
         // Every dial's value for this actor, as get_dials() returns it: numbers, toggles as
         // true / false, choice dials as their option label. Any thread.
@@ -137,6 +142,7 @@ namespace ConditionEngine::Dials {
         std::map<std::string, std::vector<std::string>> conditionNames_;  // lower-case id -> @names it registered
         std::map<std::string, nlohmann::json> userConditions_;  // name as written -> definition
         std::map<std::string, nlohmann::json> userValues_;
+        nlohmann::json editorPrefs_ = nlohmann::json::object();
         void RegisterUserNamed(bool isValue, const std::string& name, const nlohmann::json& json, std::vector<std::string>& errors);
         void DefinitionsChanged();
         std::vector<std::string> fileErrors_;
