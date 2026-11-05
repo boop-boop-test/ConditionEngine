@@ -1,0 +1,219 @@
+{
+    // Shared weather values, built into ConditionEngine.dll (docs/weather.md).
+    //
+    // $weather_rain, $weather_snow, ... read the current weather's profile: 0-100 per kind, with 25 / 50 / 75
+    // = light / moderate / heavy, worked out from the weather record itself (classification, particles,
+    // wind, lightning, fog, editor ID). So they work with any weather mod, the vanilla weathers and the ones
+    // a mod adds. $weather_wind is the wind speed, 0-100. A preset's "weathers" section corrects a weather
+    // the profile gets wrong; a preset that defines the same names replaces these.
+    "sources": {
+        "Weather": "Weather"
+    },
+    "values": {
+        "weather_clear": {
+            "label": "Clear sky", "description": "100 clear, 50 partly cloudy, 0 otherwise.",
+            "expr": "WeatherKind(Clear)", "unit": "%", "range": [0, 100], "integer": true, "fallback": 0,
+            "category": "weather", "owner": "Weather"
+        },
+        "weather_clouds": {
+            "label": "Cloud cover", "description": "50 cloudy, 75 overcast, 100 storm clouds.",
+            "expr": "WeatherKind(Clouds)", "unit": "%", "range": [0, 100], "integer": true, "fallback": 0,
+            "category": "weather", "owner": "Weather"
+        },
+        "weather_rain": {
+            "label": "Rain", "description": "25 light rain or a sun shower, 50 rain, 75 heavy, 100 extreme.",
+            "expr": "WeatherKind(Rain)", "unit": "%", "range": [0, 100], "integer": true, "fallback": 0,
+            "category": "weather", "owner": "Weather"
+        },
+        "weather_snow": {
+            "label": "Snow", "description": "25 flurries, 50 snow, 75 heavy snow.",
+            "expr": "WeatherKind(Snow)", "unit": "%", "range": [0, 100], "integer": true, "fallback": 0,
+            "category": "weather", "owner": "Weather"
+        },
+        "weather_precipitation": {
+            "label": "Precipitation", "description": "Rain or snow, whichever is heavier.",
+            "expr": "WeatherKind(Precipitation)", "unit": "%", "range": [0, 100], "integer": true, "fallback": 0,
+            "category": "weather", "owner": "Weather"
+        },
+        "weather_thunder": {
+            "label": "Thunder", "description": "Lightning: 25 rare, 50 occasional, 75 frequent.",
+            "expr": "WeatherKind(Thunder)", "unit": "%", "range": [0, 100], "integer": true, "fallback": 0,
+            "category": "weather", "owner": "Weather"
+        },
+        "weather_storm": {
+            "label": "Storm", "description": "75 a storm of any kind (thunder, gale-driven rain or snow, blizzard, ash or dust storm), 100 severe.",
+            "expr": "WeatherKind(Storm)", "unit": "%", "range": [0, 100], "integer": true, "fallback": 0,
+            "category": "weather", "owner": "Weather"
+        },
+        "weather_blizzard": {
+            "label": "Blizzard", "description": "75 when the snow is wind-driven.",
+            "expr": "WeatherKind(Blizzard)", "unit": "%", "range": [0, 100], "integer": true, "fallback": 0,
+            "category": "weather", "owner": "Weather"
+        },
+        "weather_fog": {
+            "label": "Fog", "description": "25 mist or haze, 50 fog, 75 thick fog.",
+            "expr": "WeatherKind(Fog)", "unit": "%", "range": [0, 100], "integer": true, "fallback": 0,
+            "category": "weather", "owner": "Weather"
+        },
+        "weather_wind": {
+            "label": "Wind", "description": "The weather's wind speed, 0-100. Vanilla runs from about 10 (calm) to 70 (blizzard).",
+            "expr": "WeatherKind(Wind)", "unit": "%", "range": [0, 100], "integer": true, "fallback": 0,
+            "category": "weather", "owner": "Weather"
+        },
+        "weather_ash": {
+            "label": "Ash", "description": "25 ash in the air, 50 ashfall, 75 ash storm (Solstheim, Red Mountain).",
+            "expr": "WeatherKind(Ash)", "unit": "%", "range": [0, 100], "integer": true, "fallback": 0,
+            "category": "weather", "owner": "Weather"
+        },
+        "weather_sand": {
+            "label": "Sand / dust", "description": "25 dusty, 50 blowing sand or dust, 75 dust storm.",
+            "expr": "WeatherKind(Sand)", "unit": "%", "range": [0, 100], "integer": true, "fallback": 0,
+            "category": "weather", "owner": "Weather"
+        },
+        "weather_aurora": {
+            "label": "Aurora", "description": "100 when the weather shows an aurora (at night).",
+            "expr": "WeatherKind(Aurora)", "unit": "%", "range": [0, 100], "integer": true, "fallback": 0,
+            "category": "weather", "owner": "Weather"
+        },
+        // Months 0-11 (Morning Star ... Evening Star) as most seasonal weather mods split them:
+        // winter Evening Star to Sun's Dawn, spring First Seed to Second Seed, summer Midyear to Last Seed,
+        // autumn Hearthfire to Sun's Dusk.
+        "season": {
+            "label": "Season", "description": "0 winter, 1 spring, 2 summer, 3 autumn, from the game month.",
+            "expr": "piecewise(Month, 0, 0, 1, 0, 2, 1, 4, 1, 5, 2, 7, 2, 8, 3, 10, 3, 11, 0)",
+            "range": [0, 3], "integer": true, "fallback": 0, "category": "time", "owner": "Weather"
+        }
+    },
+    "conditions": {
+        // ── The sky ──────────────────────────────────────────────────────────
+        "WeatherClear": {
+            "expr": "WeatherKind(Clear) >= 50", "label": "Weather: clear",
+            "description": "A fair sky, clear or partly cloudy.", "category": "weather", "tags": ["weather"]
+        },
+        "WeatherCloudy": {
+            "expr": "WeatherKind(Clouds) >= 50", "label": "Weather: cloudy",
+            "description": "Cloudy or worse.", "category": "weather", "tags": ["weather"]
+        },
+        "WeatherOvercast": {
+            "expr": "WeatherKind(Clouds) >= 75", "label": "Weather: overcast",
+            "description": "Fully clouded over (rain, snow and storms included).", "category": "weather", "tags": ["weather"]
+        },
+        // ── Rain and snow ────────────────────────────────────────────────────
+        "WeatherRain": {
+            "expr": "WeatherKind(Rain) >= 25", "label": "Weather: raining",
+            "description": "Any rain, sun showers included.", "category": "weather", "tags": ["weather", "rain"]
+        },
+        "WeatherHeavyRain": {
+            "expr": "WeatherKind(Rain) >= 75", "label": "Weather: heavy rain",
+            "description": "Heavy or storm rain.", "category": "weather", "tags": ["weather", "rain"]
+        },
+        "WeatherSnow": {
+            "expr": "WeatherKind(Snow) >= 25", "label": "Weather: snowing",
+            "description": "Any snow, flurries included.", "category": "weather", "tags": ["weather", "snow"]
+        },
+        "WeatherHeavySnow": {
+            "expr": "WeatherKind(Snow) >= 75", "label": "Weather: heavy snow",
+            "description": "Heavy snow or a blizzard.", "category": "weather", "tags": ["weather", "snow"]
+        },
+        "WeatherPrecipitation": {
+            "expr": "WeatherKind(Precipitation) >= 25", "label": "Weather: rain or snow",
+            "description": "Rain or snow falling.", "category": "weather", "tags": ["weather"]
+        },
+        // ── Storms ───────────────────────────────────────────────────────────
+        "WeatherStorm": {
+            "expr": "WeatherKind(Storm) >= 75", "label": "Weather: storm",
+            "description": "Any storm: thunderstorm, gale-driven rain or snow, blizzard, ash or dust storm.",
+            "category": "weather", "tags": ["weather", "storm"]
+        },
+        "WeatherThunder": {
+            "expr": "WeatherKind(Thunder) >= 25", "label": "Weather: thunderstorm",
+            "description": "Lightning can strike.", "category": "weather", "tags": ["weather", "storm"]
+        },
+        "WeatherBlizzard": {
+            "expr": "WeatherKind(Blizzard) >= 75", "label": "Weather: blizzard",
+            "description": "Wind-driven snow.", "category": "weather", "tags": ["weather", "snow", "storm"]
+        },
+        // ── Fog and wind ─────────────────────────────────────────────────────
+        "WeatherMist": {
+            "expr": "WeatherKind(Fog) >= 25", "label": "Weather: misty",
+            "description": "Mist, haze or fog.", "category": "weather", "tags": ["weather", "fog"]
+        },
+        "WeatherFog": {
+            "expr": "WeatherKind(Fog) >= 50", "label": "Weather: foggy",
+            "description": "Fog, not just mist.", "category": "weather", "tags": ["weather", "fog"]
+        },
+        "WeatherThickFog": {
+            "expr": "WeatherKind(Fog) >= 75", "label": "Weather: thick fog",
+            "description": "Thick fog.", "category": "weather", "tags": ["weather", "fog"]
+        },
+        "WeatherWindy": {
+            "expr": "WeatherKind(Wind) >= 40", "label": "Weather: windy",
+            "description": "Wind at least 40%. Vanilla storms and snow reach this; blizzards are around 70.",
+            "category": "weather", "tags": ["weather", "wind"]
+        },
+        "WeatherGale": {
+            "expr": "WeatherKind(Wind) >= 65", "label": "Weather: strong wind",
+            "description": "Wind at least 65%.", "category": "weather", "tags": ["weather", "wind"]
+        },
+        // ── Ash, sand, aurora ────────────────────────────────────────────────
+        "WeatherAsh": {
+            "expr": "WeatherKind(Ash) >= 50", "label": "Weather: ashfall",
+            "description": "Volcanic ash falling (Solstheim's ash weathers, ash storms).", "category": "weather", "tags": ["weather", "ash"]
+        },
+        "WeatherAshStorm": {
+            "expr": "WeatherKind(Ash) >= 75", "label": "Weather: ash storm",
+            "description": "An ash storm.", "category": "weather", "tags": ["weather", "ash", "storm"]
+        },
+        "WeatherDust": {
+            "expr": "WeatherKind(Sand) >= 25", "label": "Weather: dusty",
+            "description": "Sand or dust in the air.", "category": "weather", "tags": ["weather", "sand"]
+        },
+        "WeatherSandstorm": {
+            "expr": "WeatherKind(Sand) >= 75", "label": "Weather: sandstorm",
+            "description": "A sand or dust storm.", "category": "weather", "tags": ["weather", "sand", "storm"]
+        },
+        "WeatherAurora": {
+            "expr": "WeatherKind(Aurora) >= 50", "label": "Weather: aurora",
+            "description": "The weather shows an aurora; it is visible at night.", "category": "weather", "tags": ["weather"]
+        },
+        "WeatherBad": {
+            "expr": "WeatherKind(Precipitation) >= 25 || WeatherKind(Storm) >= 75 || WeatherKind(Fog) >= 50 || WeatherKind(Ash) >= 50 || WeatherKind(Sand) >= 50",
+            "label": "Weather: bad",
+            "description": "Rain, snow, a storm, fog, ashfall or blowing sand.", "category": "weather", "tags": ["weather"]
+        },
+        // ── Out in it: the actor is in an exterior ───────────────────────────
+        "OutsideInRain": {
+            "expr": "@WeatherRain && !InteriorExterior(true)", "label": "Outside in the rain",
+            "description": "Raining and the actor is outdoors.", "category": "weather", "tags": ["weather", "rain"]
+        },
+        "OutsideInSnow": {
+            "expr": "@WeatherSnow && !InteriorExterior(true)", "label": "Outside in the snow",
+            "description": "Snowing and the actor is outdoors.", "category": "weather", "tags": ["weather", "snow"]
+        },
+        "OutsideInStorm": {
+            "expr": "@WeatherStorm && !InteriorExterior(true)", "label": "Outside in a storm",
+            "description": "A storm and the actor is outdoors.", "category": "weather", "tags": ["weather", "storm"]
+        },
+        "OutsideInBadWeather": {
+            "expr": "@WeatherBad && !InteriorExterior(true)", "label": "Outside in bad weather",
+            "description": "Bad weather (see Weather: bad) and the actor is outdoors.", "category": "weather", "tags": ["weather"]
+        },
+        // ── Seasons ──────────────────────────────────────────────────────────
+        "SeasonWinter": {
+            "expr": "$season == 0", "label": "Season: winter",
+            "description": "Evening Star, Morning Star, Sun's Dawn.", "category": "time", "tags": ["season"]
+        },
+        "SeasonSpring": {
+            "expr": "$season == 1", "label": "Season: spring",
+            "description": "First Seed, Rain's Hand, Second Seed.", "category": "time", "tags": ["season"]
+        },
+        "SeasonSummer": {
+            "expr": "$season == 2", "label": "Season: summer",
+            "description": "Midyear, Sun's Height, Last Seed.", "category": "time", "tags": ["season"]
+        },
+        "SeasonAutumn": {
+            "expr": "$season == 3", "label": "Season: autumn",
+            "description": "Hearthfire, Frostfall, Sun's Dusk.", "category": "time", "tags": ["season"]
+        }
+    }
+}

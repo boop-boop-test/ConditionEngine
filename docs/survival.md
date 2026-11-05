@@ -1,9 +1,11 @@
 # Survival needs
 
-ConditionEngine has three shared survival values built in: **hunger**, **fatigue** (need for sleep) and **cold**.
-Each one reads the first survival mod in a fixed order that tracks the actor, and gives one answer on one scale. A
-mod, preset or OAR config can ask "how hungry, tired or cold is this actor" without knowing which survival mod is
-installed.
+ConditionEngine has shared survival values built in: **hunger**, **fatigue** (need for sleep) and **cold**, plus
+**warmth** and **coverage** (what the worn clothes keep out) and **dirt** and **blood**. Each one reads the first
+mod in a fixed order that tracks the actor, and gives one answer on one scale. A mod, preset or OAR config can ask
+"how hungry, tired, cold, warmly dressed or dirty is this actor" without knowing which survival mod is installed.
+Warmth and coverage work for any actor, with or without a survival mod: they read the worn armor (see
+[Warmth and coverage](#warmth-and-coverage)).
 
 The definitions are compiled into `ConditionEngine.dll` (`presets/ConditionEngine_Survival.json` in the
 repository), so every copy of the DLL has them, including copies bundled with other mods. A preset file in
@@ -18,6 +20,11 @@ repository), so every copy of the DLL has them, including copies bundled with ot
 | `@HungerMild`, `@HungerModerate`, `@HungerSevere` | at least that stage (`$hunger >= 25` / `50` / `75`) |
 | `@FatigueMild`, `@FatigueModerate`, `@FatigueSevere` | the same for fatigue |
 | `@ColdMild`, `@ColdModerate`, `@ColdSevere` | the same for cold |
+| `$warmth`, `$coverage` | 0-100 per actor: 25 poorly dressed, 50 ordinary clothes, 75 warm (furs, a cloak and hood), 100 very warm. Coverage is how well rain and snow are kept off |
+| `@WarmthPoor`, `@WarmthGood`, `@CoveragePoor`, `@CoverageGood` | `$warmth < 25`, `$warmth >= 75`, the same for coverage |
+| `@OutsideUnderdressed`, `@OutsideGettingSoaked` | outdoors in snow with warmth below 50; outdoors in rain with coverage below 50 |
+| `$dirt`, `$dirt_stage`, `$blood` | 0-100 per actor (25 mild, 50 dirty, 75 filthy); stage 0-3 |
+| `@DirtMild`, `@DirtModerate`, `@DirtSevere`, `@BloodMild`, `@BloodSevere` | at least that level |
 | `$sunhelm_hunger`, `$frostfall_cold`, ... | one source on its own (table below) |
 
 ```papyrus
@@ -160,6 +167,68 @@ actor isn't excluded. It already reads 0-100 with levels at 25 / 50 / 75 (peckis
 drained / exhausted, chilly / cold / freezing), read through `SeverActionsNative.Native_Survival_GetHunger` /
 `GetFatigue` / `GetCold`. It re-reads on `SeverActions_Tick_Survival` and `SeverActionsNative_FoodConsumed`.
 
+## Warmth and coverage
+
+`$warmth` and `$coverage` work for every actor, NPCs included, because they read the armor the actor is wearing. For
+the player with Frostfall running they read Frostfall's own totals instead (priority 90). Those also count torches,
+food, spells and perks.
+
+The armor score is `ArmorWarmth(Warmth)` / `ArmorWarmth(Coverage)`, Frostfall's points summed over the worn items.
+The rules are Frostfall 3.4.1's (`_Frost_ArmorProtectionDatastoreHandler`), the scale armor mods tag their gear for:
+
+- **Gear type from the slots**: body (32), head (30 or 31), hands (33), feet (37), cloak (46, or the
+  `WAF_ClothingCloak` keyword), shield (39). Rings, amulets and a lone circlet count for nothing.
+- **Frostfall's keywords**, when the item also has `FrostfallEnableKeywordProtection`: `FrostfallWarmthPoor` ...
+  `FrostfallWarmthMax` and `FrostfallCoveragePoor` ... `Max` pick a tier for the item's gear type. The cloak and
+  accessory keywords (`FrostfallIsCloakFur`, `FrostfallIsWarmAccessory`, ...) set fixed values, and on body or head
+  items `FrostfallExtraHead*` and `FrostfallExtraCloak*` add a hood or a cloak. These keywords exist while Frostfall
+  is loaded (it injects them into Update.esm's ID range, so armor mods can tag gear without needing Frostfall).
+- **Otherwise the defaults** for the gear type, about the Fair tier. An item that also covers the head, hands, feet
+  or cloak slot adds that part's default. A head item named "hood" or "robe" counts as a hood: less warm than a
+  helmet, but more covering.
+- **Vanilla gear**: Frostfall keeps its own table of vanilla armor, which ConditionEngine doesn't copy. In its place
+  the Survival Mode keywords move an item one tier: `Survival_ArmorWarm` up to Good, `Survival_ArmorCold` down to
+  Poor. Every SE / AE Update.esm has them, Survival Mode installed or not. 89 vanilla items are warm (jarl clothes,
+  college robes and hoods, Daedric armor ...) and 21 are cold (prisoner rags, miner clothes, sandals ...).
+
+| Gear | Poor | Fair | Good | Excellent | Max |
+|---|---|---|---|---|---|
+| Body (warmth / coverage) | 60 / 35 | 110 / 54 | 140 / 72 | 175 / 91 | 190 / 109 |
+| Head | 15 / 14 | 30 / 29 | 40 / 43 | 50 / 58 | 55 / 72 |
+| Hands | 9 / 6 | 12 / 14 | 15 / 21 | 21 / 29 | 24 / 35 |
+| Feet | 7 / 6 | 12 / 14 | 15 / 21 | 21 / 29 | 24 / 35 |
+| Cloak, misc | 6 / 6 | 12 / 12 | 20 / 20 | 30 / 30 | 40 / 40 |
+
+On the 0-100 scale, warmth 90 (all Poor) maps to 25, 165 (an ordinary set) to 50, 230 (Good with a cloak) to 75 and
+300 to 100. Coverage maps 60 / 110 / 175 / 240 the same way. `ce warmth` in the console lists each worn item and what
+it adds.
+
+The game's own Survival Mode warmth rating (the condition function `GetActorWarmth`, SE / AE only) is another
+per-actor reading. Its scale isn't documented, so it isn't mapped yet.
+
+## Dirt and blood
+
+`$dirt` reads the first bathing mod that tracks the actor; `$blood` reads Dirt and Blood.
+
+| Priority | Source | Actors | Reading |
+|---|---|---|---|
+| 70 | Bathing in Skyrim - Renewed 2.7 (`Bathing in Skyrim.esp`) | the player | `mzinDirtinessPercentage` (`0xDA8`), 0-1 |
+| 70 | Bathing in Skyrim - Renewed | its tracked bathers (`mzinTrackedBatherFaction` `0x86`) | StorageUtil float `BiS_Dirtiness` on the actor, 0-1 |
+| 68 | Bathing in Skyrim, original (`Bathing in Skyrim - Main.esp`) | the player | stage effects `0xE55C` / `0xE55D` / `0xE55E` |
+| 60 | Dirt and Blood 2.38 (`Dirt and Blood - Dynamic Visuals.esp`) | the player; bandits and laborers | the player's dirt effects `0x80D` / `0x80E` / `0x80F` / `0x83B` (stages 1-4); NPC dirt effects `0xDBE`-`0xDC2` |
+| 50 | Keep It Clean (`Keep It Clean.esp`) | the player | stage effects `0xFBDBA` / `0xFBDB6` / `0x1564EE` |
+
+- **Bathing in Skyrim - Renewed** counts dirtiness from 0 to 1 and changes tier at 0.2, 0.6 and 0.98. Those map to
+  25 / 50 / 75, and 1 maps to 100. It tracks the player in a global, and every other bather (followers it is set to
+  track) in a StorageUtil value, so followers have their own `$dirt`.
+- **Dirt and Blood** keeps the player's stage as one of four dirt spells (and four blood spells), mapped to
+  25 / 50 / 75 / 100. NPCs get its distributed spell (`DirtandBlood__DISTR.ini`). That spell gives bandits and
+  laborers fixed dirt (stage 2-4 effects) and gives any NPC hurt in a fight blood stages 1-5, mapped to
+  25 / 50 / 75 / 90 / 100. Other NPCs read 0, which is clean.
+- **Keep It Clean** and the **original Bathing in Skyrim** keep the player's stage as a magic effect. Their form IDs
+  come from the scripts of *Widget Addon - Keep It Clean - Bathing In Skyrim - Dirt and Blood* 1.7.2, a widget that
+  reads all three. They have not been checked against those mods' own plugins.
+
 ## Adding a source
 
 Another mod adds its own source in its own preset. ConditionEngine doesn't need a change:
@@ -176,8 +245,13 @@ every NPC reads the player's needs.
 
 ## Limits
 
-- **Player only, except SeverActions.** None of the other mods keeps per-actor needs that ConditionEngine can read.
-  Last Seed's follower hunger is the exception: it's tracked in per-slot globals but not mapped (above).
+- **Warmth is about clothes, not the weather.** `$warmth` says how warmly an actor is dressed, and `$cold` says how
+  cold the player is. Combine warmth with the weather values ([Weather](weather.md)) for "dressed for this weather":
+  `@OutsideUnderdressed`.
+- **Hunger, fatigue and cold are for the player only, except SeverActions.** None of the other mods keeps per-actor
+  needs that ConditionEngine can read. Last Seed's follower hunger is the exception: it's tracked in per-slot
+  globals but not mapped (above). Warmth and coverage are per actor. Dirt is per actor for Bathing in Skyrim's
+  tracked bathers and Dirt and Blood's NPCs.
 - **Polled.** Globals and script properties have no change event. Watches re-read them at the poll interval (10 s by
   default, set per watch), except SeverActions, which is refreshed on its own events.
 - **Form IDs are the mods' own.** A plugin that was compacted and ESL-flagged (ESLify) has new IDs, and its source

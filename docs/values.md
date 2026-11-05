@@ -9,7 +9,8 @@ Conditions compare them directly: `$vampire_hunger > 80`.
   or falling. It maps a mod's own scale onto yours: `piecewise(GlobalVariable(MyNeed), 0, 0, 160, 25, 340, 50, 1000, 100)`.
 - `steps(x, t1, t2, ...)` counts the thresholds x has reached: `steps($hunger, 25, 50, 75)` reads 0-3.
 
-Shared survival values (`$hunger`, `$fatigue`, `$cold`) are built in: see [Survival needs](survival.md).
+Shared survival values (`$hunger`, `$fatigue`, `$cold`) are built in: see [Survival needs](survival.md). So are the
+weather values (`$weather_rain`, `$weather_storm`, `$weather_fog`, ..., `$season`): see [Weather](weather.md).
 
 Every read returns a status as well as the number:
 

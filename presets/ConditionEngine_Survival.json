@@ -4,7 +4,9 @@
     // $hunger, $fatigue and $cold read 0-100 per actor from the highest-priority survival mod that tracks that
     // actor. Every source maps its own stages onto one scale: its first bad stage (peckish / tired / chilly) starts
     // at 25, the next at 50, the one after at 75, its maximum is 100. $hunger_stage etc. read 0 none, 1 mild,
-    // 2 moderate, 3 severe. A preset file that defines the same names replaces these.
+    // 2 moderate, 3 severe. $warmth and $coverage read the worn armor for any actor (Frostfall's total for the
+    // player while it runs); $dirt and $blood read the bathing mods. A preset file that defines the same names
+    // replaces these.
     "sources": {
         "Survival": "Survival needs",
         "SurvivalMode": "Survival Mode",
@@ -12,7 +14,11 @@
         "LastSeed": "Last Seed",
         "iNeed": "iNeed",
         "Frostfall": "Frostfall",
-        "SeverActions": "SeverActions"
+        "SeverActions": "SeverActions",
+        "Armor": "Worn armor",
+        "BathingInSkyrim": "Bathing in Skyrim",
+        "DirtAndBlood": "Dirt and Blood",
+        "KeepItClean": "Keep It Clean"
     },
     "categories": [
         {
@@ -203,6 +209,121 @@
             "requiresPlugins": ["SeverActions.esp"], "requiresDlls": ["SeverActionsNative.dll"],
             "graceSeconds": 30, "refreshOn": ["SeverActions_Tick_Survival", "SeverActionsNative_FoodConsumed"],
             "provides": "cold", "priority": 50, "category": "survival", "owner": "SeverActions"
+        },
+
+        // ── Warmth and coverage: what the worn armor keeps out, any actor ────
+        // ArmorWarmth reads Frostfall's points over the worn items: all Poor about 90, ordinary 165, warm 230,
+        // very warm 300. Coverage (rain and snow kept off): 60 / 110 / 175 / 240.
+        "warmth": {
+            "label": "Warmth",
+            "description": "How warmly this actor is dressed, 0-100 (25 poorly, 50 ordinary, 75 warm, 100 very warm): Frostfall's total for the player while it runs, else the worn armor on Frostfall's scale.",
+            "expr": "piecewise(ArmorWarmth(Warmth), 0, 0, 90, 25, 165, 50, 230, 75, 300, 100)",
+            "unit": "%", "range": [0, 100], "fallback": 0,
+            "combined": true, "category": "survival", "owner": "Armor"
+        },
+        "coverage": {
+            "label": "Coverage",
+            "description": "How well this actor's clothes keep rain and snow off, 0-100 (25 poorly, 50 ordinary, 75 well, 100 fully): Frostfall's total for the player while it runs, else the worn armor on Frostfall's scale.",
+            "expr": "piecewise(ArmorWarmth(Coverage), 0, 0, 60, 25, 110, 50, 175, 75, 240, 100)",
+            "unit": "%", "range": [0, 100], "fallback": 0,
+            "combined": true, "category": "survival", "owner": "Armor"
+        },
+        "frostfall_warmth": {
+            "label": "Warmth (Frostfall)",
+            "description": "The player's warmth in Frostfall while it runs (gear plus torch, food, spells and perks), on the same 0-100 scale.",
+            "unit": "%", "range": [0, 100], "fallback": 0,
+            "expr": "piecewise(GlobalVariable(\"0x67B8F|Frostfall.esp\"), 0, 0, 90, 25, 165, 50, 230, 75, 300, 100)",
+            "enabledWhen": "IsPlayer && GlobalVariable(\"0x6DCFB|Frostfall.esp\") == 2",
+            "requiresPlugins": ["Frostfall.esp"],
+            "provides": "warmth", "priority": 90, "category": "survival", "owner": "Frostfall"
+        },
+        "frostfall_coverage": {
+            "label": "Coverage (Frostfall)",
+            "description": "The player's coverage in Frostfall while it runs, on the same 0-100 scale.",
+            "unit": "%", "range": [0, 100], "fallback": 0,
+            "expr": "piecewise(GlobalVariable(\"0x67B91|Frostfall.esp\"), 0, 0, 60, 25, 110, 50, 175, 75, 240, 100)",
+            "enabledWhen": "IsPlayer && GlobalVariable(\"0x6DCFB|Frostfall.esp\") == 2",
+            "requiresPlugins": ["Frostfall.esp"],
+            "provides": "coverage", "priority": 90, "category": "survival", "owner": "Frostfall"
+        },
+
+        // ── Dirt and blood: the first bathing mod that tracks the actor ──────
+        "dirt": {
+            "label": "Dirt",
+            "description": "How dirty this actor is, 0-100 (25 mild, 50 dirty, 75 filthy), from Bathing in Skyrim (the player and its tracked bathers), Dirt and Blood (the player, and bandits and laborers) or Keep It Clean (the player).",
+            "unit": "%", "range": [0, 100], "fallback": 0,
+            "combined": true, "category": "survival", "owner": "Survival"
+        },
+        "dirt_stage": {
+            "label": "Dirt stage",
+            "description": "0 clean, 1 mild, 2 dirty, 3 filthy (Dirt at 25 / 50 / 75).",
+            "expr": "steps($dirt, 25, 50, 75)",
+            "range": [0, 3], "integer": true, "fallback": 0, "category": "survival", "owner": "Survival"
+        },
+        "blood": {
+            "label": "Blood",
+            "description": "How bloody this actor is, 0-100 (25 spattered ... 100 soaked), from Dirt and Blood: the player's stages, and NPCs hurt in a fight.",
+            "unit": "%", "range": [0, 100], "fallback": 0,
+            "combined": true, "category": "survival", "owner": "Survival"
+        },
+
+        // ── Bathing in Skyrim - Renewed 2.7: dirtiness 0-1, tiers at 0.2 / 0.6 / 0.98 ──
+        "bathing_dirt": {
+            "label": "Dirt (Bathing in Skyrim)",
+            "description": "The player's dirtiness in Bathing in Skyrim (mzinDirtinessPercentage), tiers 0.2 / 0.6 / 0.98 mapped to 25 / 50 / 75, 1 to 100.",
+            "unit": "%", "range": [0, 100], "fallback": 0,
+            "expr": "piecewise(GlobalVariable(\"0xDA8|Bathing in Skyrim.esp\"), 0, 0, 0.2, 25, 0.6, 50, 0.98, 75, 1, 100)",
+            "enabledWhen": "IsPlayer",
+            "requiresPlugins": ["Bathing in Skyrim.esp"],
+            "provides": "dirt", "priority": 70, "category": "survival", "owner": "BathingInSkyrim"
+        },
+        "bathing_dirt_npc": {
+            "label": "Dirt (Bathing in Skyrim, followers)",
+            "description": "A tracked bather's dirtiness in Bathing in Skyrim (StorageUtil BiS_Dirtiness on actors in mzinTrackedBatherFaction), on the same scale.",
+            "unit": "%", "range": [0, 100], "fallback": 0,
+            "expr": "piecewise(StorageUtil(BiS_Dirtiness, interval=10), 0, 0, 0.2, 25, 0.6, 50, 0.98, 75, 1, 100)",
+            "enabledWhen": "!IsPlayer && Faction(\"0x86|Bathing in Skyrim.esp\", 0)",
+            "requiresPlugins": ["Bathing in Skyrim.esp"], "graceSeconds": 30,
+            "provides": "dirt", "priority": 70, "category": "survival", "owner": "BathingInSkyrim"
+        },
+        // The original Bathing in Skyrim (before Renewed): its dirtiness stage effects on the player
+        "bathingoriginal_dirt": {
+            "label": "Dirt (Bathing in Skyrim, original)",
+            "description": "The player's dirtiness stage in the original Bathing in Skyrim: stages 2 / 3 / 4 mapped to 25 / 50 / 75.",
+            "unit": "%", "range": [0, 100], "fallback": 0,
+            "expr": "max(HasMagicEffect(\"0xE55C|Bathing in Skyrim - Main.esp\") * 25, HasMagicEffect(\"0xE55D|Bathing in Skyrim - Main.esp\") * 50, HasMagicEffect(\"0xE55E|Bathing in Skyrim - Main.esp\") * 75)",
+            "enabledWhen": "IsPlayer",
+            "requiresPlugins": ["Bathing in Skyrim - Main.esp"],
+            "provides": "dirt", "priority": 68, "category": "survival", "owner": "BathingInSkyrim"
+        },
+
+        // ── Dirt and Blood 2.38: stage effects on the player, NPC effects from its distributed spells ──
+        "dirtandblood_dirt": {
+            "label": "Dirt (Dirt and Blood)",
+            "description": "Dirt and Blood's dirt: the player's stages 1-4 mapped to 25 / 50 / 75 / 100, and the same stages on bandits and laborers.",
+            "unit": "%", "range": [0, 100], "fallback": 0,
+            "expr": "max(HasMagicEffect(\"0x80D|Dirt and Blood - Dynamic Visuals.esp\") * 25, HasMagicEffect(\"0x80E|Dirt and Blood - Dynamic Visuals.esp\") * 50, HasMagicEffect(\"0x80F|Dirt and Blood - Dynamic Visuals.esp\") * 75, HasMagicEffect(\"0x83B|Dirt and Blood - Dynamic Visuals.esp\") * 100, HasMagicEffect(\"0xDBE|Dirt and Blood - Dynamic Visuals.esp\") * 50, HasMagicEffect(\"0xDBF|Dirt and Blood - Dynamic Visuals.esp\") * 50, HasMagicEffect(\"0xDC0|Dirt and Blood - Dynamic Visuals.esp\") * 75, HasMagicEffect(\"0xDC1|Dirt and Blood - Dynamic Visuals.esp\") * 75, HasMagicEffect(\"0xDC2|Dirt and Blood - Dynamic Visuals.esp\") * 100)",
+            "requiresPlugins": ["Dirt and Blood - Dynamic Visuals.esp"],
+            "provides": "dirt", "priority": 60, "category": "survival", "owner": "DirtAndBlood"
+        },
+        "dirtandblood_blood": {
+            "label": "Blood (Dirt and Blood)",
+            "description": "Dirt and Blood's blood: the player's stages 1-4 mapped to 25 / 50 / 75 / 100, an NPC's stages 1-5 to 25 / 50 / 75 / 90 / 100.",
+            "unit": "%", "range": [0, 100], "fallback": 0,
+            "expr": "max(HasMagicEffect(\"0x810|Dirt and Blood - Dynamic Visuals.esp\") * 25, HasMagicEffect(\"0x811|Dirt and Blood - Dynamic Visuals.esp\") * 50, HasMagicEffect(\"0x812|Dirt and Blood - Dynamic Visuals.esp\") * 75, HasMagicEffect(\"0x83A|Dirt and Blood - Dynamic Visuals.esp\") * 100, HasMagicEffect(\"0x840|Dirt and Blood - Dynamic Visuals.esp\") * 25, HasMagicEffect(\"0x83F|Dirt and Blood - Dynamic Visuals.esp\") * 50, HasMagicEffect(\"0x81D|Dirt and Blood - Dynamic Visuals.esp\") * 75, HasMagicEffect(\"0x81E|Dirt and Blood - Dynamic Visuals.esp\") * 90, HasMagicEffect(\"0x81F|Dirt and Blood - Dynamic Visuals.esp\") * 100)",
+            "requiresPlugins": ["Dirt and Blood - Dynamic Visuals.esp"],
+            "provides": "blood", "priority": 60, "category": "survival", "owner": "DirtAndBlood"
+        },
+
+        // ── Keep It Clean: its dirtiness stage effects on the player ─────────
+        "keepitclean_dirt": {
+            "label": "Dirt (Keep It Clean)",
+            "description": "The player's dirtiness stage in Keep It Clean: stages 2 / 3 / 4 mapped to 25 / 50 / 75.",
+            "unit": "%", "range": [0, 100], "fallback": 0,
+            "expr": "max(HasMagicEffect(\"0xFBDBA|Keep It Clean.esp\") * 25, HasMagicEffect(\"0xFBDB6|Keep It Clean.esp\") * 50, HasMagicEffect(\"0x1564EE|Keep It Clean.esp\") * 75)",
+            "enabledWhen": "IsPlayer",
+            "requiresPlugins": ["Keep It Clean.esp"],
+            "provides": "dirt", "priority": 50, "category": "survival", "owner": "KeepItClean"
         }
     },
     "conditions": {
@@ -241,6 +362,52 @@
         "ColdSevere": {
             "expr": "$cold >= 75", "label": "Cold: severe",
             "description": "Cold at least 75 (freezing).", "category": "survival", "tags": ["cold"]
+        },
+        "WarmthPoor": {
+            "expr": "$warmth < 25", "label": "Warmth: poorly dressed",
+            "description": "Warmth below 25: next to nothing, or rags.", "category": "survival", "tags": ["warmth"]
+        },
+        "WarmthGood": {
+            "expr": "$warmth >= 75", "label": "Warmth: warmly dressed",
+            "description": "Warmth at least 75: furs, or warm clothes with a cloak and hood.", "category": "survival", "tags": ["warmth"]
+        },
+        "CoveragePoor": {
+            "expr": "$coverage < 25", "label": "Coverage: exposed",
+            "description": "Coverage below 25: rain and snow get through.", "category": "survival", "tags": ["warmth"]
+        },
+        "CoverageGood": {
+            "expr": "$coverage >= 75", "label": "Coverage: weatherproof",
+            "description": "Coverage at least 75: full clothes with a hood or cloak.", "category": "survival", "tags": ["warmth"]
+        },
+        "OutsideUnderdressed": {
+            "expr": "!InteriorExterior(true) && WeatherKind(Snow) >= 25 && $warmth < 50",
+            "label": "Outside in the snow, underdressed",
+            "description": "Snowing, the actor is outdoors, and warmth below 50.", "category": "survival", "tags": ["warmth", "weather"]
+        },
+        "OutsideGettingSoaked": {
+            "expr": "!InteriorExterior(true) && WeatherKind(Rain) >= 25 && $coverage < 50",
+            "label": "Outside in the rain, getting soaked",
+            "description": "Raining, the actor is outdoors, and coverage below 50.", "category": "survival", "tags": ["warmth", "weather"]
+        },
+        "DirtMild": {
+            "expr": "$dirt >= 25", "label": "Dirt: mild or worse",
+            "description": "Dirt at least 25.", "category": "survival", "tags": ["dirt"]
+        },
+        "DirtModerate": {
+            "expr": "$dirt >= 50", "label": "Dirt: dirty or worse",
+            "description": "Dirt at least 50.", "category": "survival", "tags": ["dirt"]
+        },
+        "DirtSevere": {
+            "expr": "$dirt >= 75", "label": "Dirt: filthy",
+            "description": "Dirt at least 75.", "category": "survival", "tags": ["dirt"]
+        },
+        "BloodMild": {
+            "expr": "$blood >= 25", "label": "Blood: spattered or worse",
+            "description": "Blood at least 25.", "category": "survival", "tags": ["dirt"]
+        },
+        "BloodSevere": {
+            "expr": "$blood >= 75", "label": "Blood: soaked",
+            "description": "Blood at least 75.", "category": "survival", "tags": ["dirt"]
         }
     }
 }

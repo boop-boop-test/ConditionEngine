@@ -2,6 +2,11 @@
 #include "ConditionEngine/EvaluationContext.h"
 #include "ConditionEngine/Forms.h"
 #include "ConditionEngine/Registry.h"
+#include "ConditionEngine/Gear/ArmorProtection.h"
+
+#include <array>
+#include <format>
+#include <mutex>
 
 namespace ConditionEngine {
 
@@ -21,6 +26,96 @@ namespace ConditionEngine {
             return std::any_of(std::begin(kWeaponTypes), std::end(kWeaponTypes),
                                [&](std::string_view known) { return IEquals(known, type); });
         }
+
+        // The protection keywords, by editor ID (the game keeps keyword editor IDs). Frostfall's exist only
+        // while Frostfall is loaded; Survival_ArmorWarm / Cold are in every SE / AE Update.esm.
+        const std::array<RE::BGSKeyword*, Gear::kArmorKeywordCount>& ProtectionKeywords() {
+            static std::array<RE::BGSKeyword*, Gear::kArmorKeywordCount> keywords{};
+            static std::once_flag once;
+            std::call_once(once, [] {
+                for (std::size_t i = 0; i < Gear::kArmorKeywordCount; ++i) {
+                    const std::string id(Gear::ArmorKeywordEditorId(static_cast<Gear::ArmorKeyword>(i)));
+                    keywords[i] = RE::TESForm::LookupByEditorID<RE::BGSKeyword>(id);
+                }
+            });
+            return keywords;
+        }
+
+        bool NameSaysHood(const char* name) {
+            if (!name) return false;
+            std::string lower(name);
+            std::transform(lower.begin(), lower.end(), lower.begin(),
+                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            return lower.find("hood") != std::string::npos || lower.find("robe") != std::string::npos;
+        }
+
+        // Every worn armor item, from one pass over the inventory
+        std::vector<RE::TESObjectARMO*> WornArmor(RE::Actor* actor) {
+            std::vector<RE::TESObjectARMO*> worn;
+            if (!actor) return worn;
+            for (const auto& [item, data] : actor->GetInventory([](RE::TESBoundObject& o) { return o.IsArmor(); })) {
+                if (data.first > 0 && data.second && data.second->IsWorn()) {
+                    if (auto* armor = item->As<RE::TESObjectARMO>()) worn.push_back(armor);
+                }
+            }
+            return worn;
+        }
+
+        Gear::ArmorPiece PieceOf(RE::TESObjectARMO* armor) {
+            Gear::ArmorPiece piece;
+            piece.slotMask = armor->GetSlotMask().underlying();
+            const auto& keywords = ProtectionKeywords();
+            for (std::size_t i = 0; i < keywords.size(); ++i) {
+                if (keywords[i] && armor->HasKeyword(keywords[i])) piece.keywords.set(i);
+            }
+            piece.hoodName = NameSaysHood(armor->GetName());
+            return piece;
+        }
+    }
+
+    // ============================================================================
+    // ArmorWarmthCondition
+    // ============================================================================
+
+    ArmorWarmthCondition::ArmorWarmthCondition(bool coverage, float value, ComparisonOperator op)
+        : coverage_(coverage), value_(value), op_(op) {}
+
+    ValueResult ArmorWarmthCondition::ReadValue(const EvaluationContext& context) const {
+        auto* actor = context.GetActor();
+        if (!actor) return ValueResult::Fail(ValueStatus::Unavailable, "no actor");
+        std::vector<Gear::ArmorPiece> pieces;
+        for (auto* armor : WornArmor(actor)) pieces.push_back(PieceOf(armor));
+        const auto total = Gear::ScoreAll(pieces);
+        return ValueResult::Of(coverage_ ? total.coverage : total.warmth);
+    }
+
+    bool ArmorWarmthCondition::Evaluate(const EvaluationContext& context) const {
+        const auto r = ReadValue(context);
+        return r.Ok() && CompareFloat(static_cast<float>(r.value), value_, op_);
+    }
+
+    std::vector<std::string> ArmorWarmthCondition::Breakdown(RE::Actor* actor) {
+        std::vector<std::string> lines;
+        for (auto* armor : WornArmor(actor)) {
+            const auto p = Gear::Score(PieceOf(armor));
+            lines.push_back(std::format("{} ({}, {}): warmth {}, coverage {}", armor->GetName() ? armor->GetName() : "?",
+                                        Gear::GearTypeName(p.type), p.source, p.warmth, p.coverage));
+        }
+        return lines;
+    }
+
+    std::string ArmorWarmthCondition::GetDescription() const {
+        return std::string("Armor ") + (coverage_ ? "coverage " : "warmth ") + ComparisonOpToString(op_) + " " +
+               std::to_string(static_cast<int>(value_));
+    }
+
+    nlohmann::json ArmorWarmthCondition::ToJson() const {
+        return {{"type", "ArmorWarmth"}, {"measure", coverage_ ? "Coverage" : "Warmth"},
+                {"operator", ComparisonOpToName(op_)}, {"value", value_}};
+    }
+
+    std::unique_ptr<Condition> ArmorWarmthCondition::Clone() const {
+        return std::make_unique<ArmorWarmthCondition>(coverage_, value_, op_);
     }
 
     // ============================================================================
@@ -223,6 +318,32 @@ namespace ConditionEngine {
             .Positional({"item", "count"})
             .Compare("count")
             .Factory(itemCount(true))
+            .Register(r);
+
+        TypeBuilder("ArmorWarmth", "Armor Warmth", "gear")
+            .Aliases({"Warmth", "ArmorCoverage"})
+            .Icon("🧥")
+            .Describe("How warm (or covered against rain and snow) the worn armor keeps the actor, on Frostfall's scale: "
+                      "about 90 poorly dressed, 165 ordinary, 230 warm, 300 very warm. Works for any actor, with or "
+                      "without Frostfall")
+            .Fields({Enum("measure", "Measure",
+                          {{"Warmth", "Warmth", "Frostfall warmth points, 0-333"},
+                           {"Coverage", "Coverage", "Frostfall coverage points, 0-291 (keeps rain and snow off)"}},
+                          "Warmth"),
+                     Comparison("operator", "Operator", "GreaterOrEqual"),
+                     Int("value", "Points", 165).Range(0, 400)})
+            .Positional({"measure", "value"})
+            .Compare("value")
+            .Value({.min = 0, .max = 400, .integer = true})
+            .Factory([](const json& j) -> std::unique_ptr<Condition> {
+                const bool hasOp = j.contains("operator") || j.contains("operation");
+                const auto measure = j.value("measure", std::string("Warmth"));
+                if (!IEquals(measure, "Warmth") && !IEquals(measure, "Coverage")) {
+                    throw std::invalid_argument("measure must be Warmth or Coverage, not '" + measure + "'");
+                }
+                return std::make_unique<ArmorWarmthCondition>(IEquals(measure, "Coverage"), j.value("value", 0.0f),
+                                                              hasOp ? ParseComparisonOperator(j) : ComparisonOperator::GreaterEqual);
+            })
             .Register(r);
 
         TypeBuilder("EquippedWeaponType", "Held Weapon Type", "gear")

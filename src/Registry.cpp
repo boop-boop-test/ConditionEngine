@@ -588,7 +588,8 @@ namespace ConditionEngine {
         }
         std::unique_lock lock(mutex_);
         auto& entry = namedValues_[Lower(definition->name)];
-        if (entry && entry->source != definition->source) {
+        // Declaring a value that a source already declared implicitly is the normal order, not a replacement
+        if (entry && entry->source != definition->source && entry->source != "implicit") {
             SKSE::log::warn("ConditionEngine: named value '{}' from '{}' replaced by '{}'",
                             definition->name, entry->source, definition->source);
         }

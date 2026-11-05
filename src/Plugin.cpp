@@ -12,6 +12,7 @@
 #include "ConditionEngine/Settings.h"
 #include "ConditionEngine/Values/PushedValues.h"
 #include "ConditionEngine/Watcher.h"
+#include "ConditionEngine/Weather/WeatherProfiles.h"
 
 #include <spdlog/sinks/basic_file_sink.h>
 
@@ -38,9 +39,10 @@ namespace {
                 ConditionEngine::Availability::Get().RefreshLoadedPlugins();
                 const auto settings = ConditionEngine::LoadSettings(ConditionEngine::GetDefaultSettingsPath());
                 ConditionEngine::ApplyTemperatureSettings(settings);
+                ConditionEngine::Weather::PrimeEditorIds();  // reads weather editor IDs on a worker
 
                 const auto builtin = ConditionEngine::LoadBuiltinPresets();
-                SKSE::log::info("Loaded {} built-in named conditions and values (survival)", builtin);
+                SKSE::log::info("Loaded {} built-in named conditions and values (survival, weather)", builtin);
                 auto count = ConditionEngine::LoadPresetDirectory(ConditionEngine::GetDefaultPresetDirectory());
                 SKSE::log::info("Loaded {} named conditions and values from presets", count);
 

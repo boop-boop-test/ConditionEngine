@@ -11,6 +11,9 @@
 #include "ConditionEngine/Stats.h"
 #include "ConditionEngine/Value.h"
 #include "ConditionEngine/Values/ValueNodes.h"
+#include "ConditionEngine/Weather/WeatherProfiles.h"
+#include "ConditionEngine/Conditions/GearConditions.h"
+#include "ConditionEngine/Gear/ArmorProtection.h"
 
 #include <algorithm>
 #include <format>
@@ -30,6 +33,8 @@ namespace ConditionEngine::Console {
             "                                0x14|Skyrim.esm), an editor ID or a loaded actor's name\n"
             "ce list [filter]                named conditions and values, read for the actor\n"
             "ce stats [on|off|reset]         evaluation counters and timings\n"
+            "ce weather                      the current weather and what it counts as\n"
+            "ce warmth                       what the actor's worn armor adds to warmth and coverage\n"
             "Quote expressions with commas: ce eval \"Time(20, 6) && $hunger > 50\"";
 
         std::string Lower(std::string s) {
@@ -248,6 +253,46 @@ namespace ConditionEngine::Console {
             }
         }
 
+        void PrintWeather(const char* label, const RE::TESWeather* weather) {
+            auto profile = Weather::ProfileOf(weather);
+            if (!profile) return;
+            Print(std::format("ce: {} {}", label, Weather::NameOf(weather)));
+            for (std::size_t i = 0; i < Weather::kKindCount; ++i) {
+                const auto kind = static_cast<Weather::Kind>(i);
+                if (!profile->Level(kind) && kind != Weather::Kind::Wind) continue;
+                Print(std::format("  {:<14} {:>3}  {}", Weather::KindName(kind), profile->Level(kind), profile->Why(kind)));
+            }
+        }
+
+        void WarmthCommand(RE::Actor* actor) {
+            Print("ce: " + ActorText(actor));
+            if (!actor) return;
+            EvaluationContext context(actor);
+            int warmth = 0, coverage = 0;
+            for (const char* measure : {"Warmth", "Coverage"}) {
+                std::string error;
+                if (auto v = Expression::CompileValueAny(std::string("ArmorWarmth(") + measure + ")", &error)) {
+                    (measure[0] == 'W' ? warmth : coverage) = static_cast<int>(v->Read(context).value);
+                }
+            }
+            Print(std::format("  worn armor: warmth {} of {}, coverage {} of {}", warmth, Gear::kMaxWarmth, coverage,
+                              Gear::kMaxCoverage));
+            for (const auto& line : ArmorWarmthCondition::Breakdown(actor)) Print("  " + line);
+        }
+
+        void WeatherCommand() {
+            auto* sky = RE::Sky::GetSingleton();
+            if (!sky || !sky->currentWeather) {
+                Print("ce: no current weather");
+                return;
+            }
+            PrintWeather("weather", sky->currentWeather);
+            if (sky->lastWeather && sky->lastWeather != sky->currentWeather && sky->currentWeatherPct < 1.0f) {
+                Print(std::format("ce: changing over, {:.0f}% done, from:", sky->currentWeatherPct * 100.0f));
+                PrintWeather("previous", sky->lastWeather);
+            }
+        }
+
         void Run(const std::string& line) {
             std::string_view rest(line);
             NextWord(rest);  // the command itself
@@ -269,6 +314,10 @@ namespace ConditionEngine::Console {
                 List(DefaultActor(), Remainder(rest));
             } else if (sub == "stats") {
                 StatsCommand(Remainder(rest));
+            } else if (sub == "weather" || sub == "w") {
+                WeatherCommand();
+            } else if (sub == "warmth" || sub == "gear") {
+                WarmthCommand(DefaultActor());
             } else {
                 Print("ce: unknown '" + sub + "'");
                 Print(kUsage);

@@ -1,6 +1,8 @@
 #include "ConditionEngine/Presets.h"
+#include "ConditionEngine/Availability.h"
 #include "ConditionEngine/Expression.h"
 #include "ConditionEngine/Registry.h"
+#include "ConditionEngine/Weather/WeatherProfiles.h"
 
 #include <fstream>
 
@@ -50,8 +52,10 @@ namespace ConditionEngine {
         const bool hasConditions = root.is_object() && root.contains("conditions") && root["conditions"].is_object();
         const bool hasValues = root.is_object() && root.contains("values") && root["values"].is_object();
         const bool hasCategories = root.is_object() && root.contains("categories") && root["categories"].is_array();
-        if (!hasConditions && !hasValues && !hasCategories) {
-            SKSE::log::warn("ConditionEngine: preset '{}' has no \"conditions\", \"values\" or \"categories\"", source);
+        const bool hasWeathers = root.is_object() && root.contains("weathers");
+        if (!hasConditions && !hasValues && !hasCategories && !hasWeathers) {
+            SKSE::log::warn("ConditionEngine: preset '{}' has no \"conditions\", \"values\", \"categories\" or \"weathers\"",
+                            source);
             return 0;
         }
 
@@ -83,6 +87,13 @@ namespace ConditionEngine {
             }
         }
 
+        // Corrections to weather profiles: {"TS_*_Heavy": {"fog": 75}, "0x10A241|Skyrim.esm": {"rain": 50}}
+        if (hasWeathers) {
+            std::vector<std::string> warnings;
+            count += Weather::AddOverrides(root["weathers"], source, &warnings);
+            for (const auto& w : warnings) SKSE::log::warn("ConditionEngine: preset '{}': {}", source, w);
+        }
+
         // Values first, so value problems are reported before conditions that use them
         // ($name resolves when read, so the order does not change behavior)
         if (hasValues) {
@@ -93,7 +104,11 @@ namespace ConditionEngine {
                     SKSE::log::warn("ConditionEngine: value '{}' in '{}' skipped: {}", name, source, error);
                     continue;
                 }
-                if (def->value) {
+                // A source for a mod that isn't installed is skipped when read; checking its forms now would only
+                // warn that they are missing (and form lookups need the game's data)
+                const bool required = def->requiresPlugins.empty() && def->requiresDlls.empty() ||
+                                      Availability::Get().CheckRequirements(def->requiresPlugins, def->requiresDlls).Ready();
+                if (def->value && required) {
                     for (const auto& problem : def->value->Validate()) {
                         SKSE::log::warn("ConditionEngine: value '{}' in '{}': {}", name, source, problem);
                     }

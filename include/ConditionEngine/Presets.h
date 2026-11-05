@@ -10,6 +10,9 @@
 //       "ColdOutside":  { "type": "Logical", "operator": "And", "children": [ ... ] },
 //       "VeryHungry":   "$vampire_hunger > 80"
 //     },
+//     "weathers": {
+//       "TS_*_Heavy":          { "fog": 75 },          corrects weather profiles (docs/weather.md)
+//     },
 //     "values": {
 //       "light":          "Game(GetLightLevel) / 100",
 //       "vampire_hunger": { "label": "Vampire hunger", "unit": "%", "range": [0, 100],

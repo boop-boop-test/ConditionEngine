@@ -60,6 +60,28 @@ namespace ConditionEngine {
         Hand hand_;
     };
 
+    // ArmorWarmth(Warmth) / ArmorWarmth(Coverage): what the worn armor adds up to, on Frostfall's scale
+    // (Gear/ArmorProtection.h), for any actor. ArmorWarmth(Warmth, 165) means >= 165.
+    class ArmorWarmthCondition : public Condition {
+    public:
+        ArmorWarmthCondition(bool coverage, float value, ComparisonOperator op);
+
+        bool Evaluate(const EvaluationContext& context) const override;
+        ValueResult ReadValue(const EvaluationContext& context) const override;
+        std::string GetDescription() const override;
+        nlohmann::json ToJson() const override;
+        std::unique_ptr<Condition> Clone() const override;
+        EventDependency GetEventDependencies() const override { return EventDependency::Equipment; }
+
+        // Each worn item and what it adds: "Fur Armor (body, Survival_ArmorWarm): warmth 140, coverage 72"
+        static std::vector<std::string> Breakdown(RE::Actor* actor);
+
+    private:
+        bool coverage_;
+        float value_;
+        ComparisonOperator op_;
+    };
+
     class Registry;
     void RegisterGearConditionTypes(Registry& registry);
 

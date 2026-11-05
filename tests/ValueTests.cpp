@@ -875,21 +875,29 @@ void RunValueTests(CheckFn check) {
     // ── Built-in survival preset (presets/ConditionEngine_Survival.json) ─────
     {
         const auto loaded = LoadBuiltinPresets();
-        Check(loaded == 29, "built-in survival preset: 20 values and 9 conditions, got " + std::to_string(loaded));
+        Check(loaded == 97, "built-in presets: survival 33 values and 20 conditions, weather 14 values and 30 conditions, got " +
+                                std::to_string(loaded));
         const char* values[] = {"hunger", "fatigue", "cold", "hunger_stage", "fatigue_stage", "cold_stage",
                                 "frostfall_cold", "sunhelm_hunger", "sunhelm_fatigue", "sunhelm_cold",
                                 "lastseed_hunger", "lastseed_fatigue", "ineed_hunger", "ineed_fatigue",
                                 "survivalmode_hunger", "survivalmode_fatigue", "survivalmode_cold",
-                                "severactions_hunger", "severactions_fatigue", "severactions_cold"};
+                                "severactions_hunger", "severactions_fatigue", "severactions_cold",
+                                "warmth", "coverage", "frostfall_warmth", "frostfall_coverage", "dirt", "dirt_stage", "blood",
+                                "bathing_dirt", "bathing_dirt_npc", "bathingoriginal_dirt", "dirtandblood_dirt",
+                                "dirtandblood_blood", "keepitclean_dirt"};
         for (const char* name : values) {
             auto def = registry.FindNamedValue(name);
             Check(def != nullptr, std::string("built-in value $") + name);
             if (!def) continue;
-            for (const auto& problem : def->value ? def->value->Validate() : std::vector<std::string>{}) {
+            // HasMagicEffect checks its forms when validated, which needs the game's data
+            const bool readsEffects = def->value && def->value->ToJson().dump().find("HasMagicEffect") != std::string::npos;
+            for (const auto& problem : def->value && !readsEffects ? def->value->Validate() : std::vector<std::string>{}) {
                 Check(false, std::string("$") + name + ": " + problem);
             }
             const bool source = !def->provides.empty();
-            Check(!source || (def->value && def->enabledWhen && !def->requiresPlugins.empty()),
+            // Dirt and Blood reads magic effects that are absent on actors it doesn't dirty, so it needs no enabledWhen
+            const bool allActors = std::string(name).starts_with("dirtandblood_");
+            Check(!source || (def->value && (def->enabledWhen || allActors) && !def->requiresPlugins.empty()),
                   std::string("$") + name + " has an expression, an enabledWhen and its plugin");
         }
         auto order = [&](const std::string& need) {
@@ -904,8 +912,13 @@ void RunValueTests(CheckFn check) {
               "fatigue source order: " + order("fatigue"));
         Check(order("cold") == "frostfall_cold,sunhelm_cold,survivalmode_cold,severactions_cold",
               "cold source order: " + order("cold"));
+        Check(order("dirt") == "bathing_dirt,bathing_dirt_npc,bathingoriginal_dirt,dirtandblood_dirt,keepitclean_dirt",
+              "dirt source order: " + order("dirt"));
+        Check(order("warmth") == "frostfall_warmth" && order("blood") == "dirtandblood_blood", "warmth and blood sources");
         for (const char* name : {"HungerMild", "HungerModerate", "HungerSevere", "FatigueMild", "FatigueModerate",
-                                 "FatigueSevere", "ColdMild", "ColdModerate", "ColdSevere"}) {
+                                 "FatigueSevere", "ColdMild", "ColdModerate", "ColdSevere", "WarmthPoor", "WarmthGood",
+                                 "CoveragePoor", "CoverageGood", "OutsideUnderdressed", "OutsideGettingSoaked", "DirtMild",
+                                 "DirtModerate", "DirtSevere", "BloodMild", "BloodSevere"}) {
             Check(registry.FindNamed(name) != nullptr, std::string("built-in condition @") + name);
         }
         // Nothing installed and no actor: the combined values read unavailable with their fallback

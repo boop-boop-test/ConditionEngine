@@ -249,15 +249,73 @@ namespace ConditionEngine {
         TypeBuilder("Weather", "Weather", "weather")
             .Aliases({"WeatherCondition"})
             .Icon("🌤️")
-            .Describe("Weather classification, or a weather's exact name")
-            .Fields({Enum("weatherType", "Weather Type", Options({"Clear", "Cloudy", "Rainy", "Snowy"}), "Clear")
+            .Describe("Weather classification, what the weather is like (any weather mod), or a weather's editor ID")
+            .Fields({Enum("weatherType", "Weather Type",
+                          {{"Clear", "Clear", "Classed pleasant"},
+                           {"Cloudy", "Cloudy", "Classed cloudy (overcast, fog, ash)"},
+                           {"Rainy", "Rainy", "Classed rainy"},
+                           {"Snowy", "Snowy", "Classed snow"},
+                           {"Stormy", "Stormy", "Any storm: thunder, gale, blizzard, ash or dust storm"},
+                           {"Thunderstorm", "Thunderstorm", "Lightning can strike"},
+                           {"Blizzard", "Blizzard", "Wind-driven snow"},
+                           {"Foggy", "Foggy", "Fog (not just mist)"},
+                           {"Misty", "Misty", "Mist or fog"},
+                           {"Windy", "Windy", "Wind at least 40%"},
+                           {"Ashfall", "Ashfall", "Volcanic ash in the air"},
+                           {"Sandstorm", "Sand / Dust", "Sand or dust in the air"},
+                           {"Aurora", "Aurora", "Shows an aurora at night"},
+                           {"Overcast", "Overcast", "Fully clouded over"}},
+                          "Clear")
                          .Custom()
-                         .Describe("Clear/Cloudy/Rainy/Snowy classification, or a weather name")})
+                         .Describe("A classification, a kind, or a weather editor ID (* and ? match any)")})
             .Factory([](const json& j) {
                 return std::make_unique<WeatherCondition>(j.value("weatherType", j.value("weatherName", "")),
                                                           ParseComparisonOperator(j));
             })
             .Register(r);
+
+        {
+            std::vector<FieldOption> kinds;
+            static constexpr std::pair<Weather::Kind, const char*> kKindHelp[] = {
+                {Weather::Kind::Clear, "100 clear, 50 partly cloudy"},
+                {Weather::Kind::Clouds, "50 cloudy, 75 overcast, 100 storm clouds"},
+                {Weather::Kind::Rain, "25 light, 50 rain, 75 heavy, 100 extreme"},
+                {Weather::Kind::Snow, "25 flurries, 50 snow, 75 heavy"},
+                {Weather::Kind::Precipitation, "Rain or snow, whichever is heavier"},
+                {Weather::Kind::Thunder, "Lightning: 25 rare, 50 occasional, 75 frequent"},
+                {Weather::Kind::Storm, "75 storm, 100 severe"},
+                {Weather::Kind::Blizzard, "75 when snow is wind-driven"},
+                {Weather::Kind::Fog, "25 mist, 50 fog, 75 thick fog"},
+                {Weather::Kind::Wind, "Wind speed, 0-100"},
+                {Weather::Kind::Ash, "25 ash in the air, 50 ashfall, 75 ash storm"},
+                {Weather::Kind::Sand, "25 dusty, 50 blowing sand, 75 dust storm"},
+                {Weather::Kind::Aurora, "100 when an aurora shows at night"},
+            };
+            for (const auto& [kind, help] : kKindHelp) {
+                const std::string name(Weather::KindName(kind));
+                kinds.push_back({name, name, help});
+            }
+            TypeBuilder("WeatherKind", "Weather Level", "weather")
+                .Icon("⛈️")
+                .Describe("How much of one kind of weather there is, 0-100 (25 light, 50 moderate, 75 heavy), "
+                          "for any weather mod")
+                .Fields({Enum("kind", "Kind", std::move(kinds), "Rain"),
+                         Comparison("operator", "Operator", "GreaterOrEqual"),
+                         Int("minLevel", "Level", 25).Range(0, 100)})
+                .Positional({"kind", "minLevel"})
+                .Compare("minLevel")
+                .Value({.unit = "%", .min = 0, .max = 100, .integer = true})
+                .Factory([](const json& j) -> std::unique_ptr<Condition> {
+                    const auto name = j.value("kind", std::string("Rain"));
+                    const auto kind = Weather::ParseKind(name);
+                    if (!kind) throw std::invalid_argument("unknown weather kind '" + name + "'");
+                    const bool hasOperator = j.contains("operator") || j.contains("operation");
+                    return std::make_unique<WeatherKindCondition>(
+                        *kind, j.value("minLevel", 25.0f),
+                        hasOperator ? ParseComparisonOperator(j) : ComparisonOperator::GreaterEqual);
+                })
+                .Register(r);
+        }
 
         TypeBuilder("Temperature", "Temperature", "weather")
             .Aliases({"TemperatureCondition"})
@@ -584,13 +642,13 @@ namespace ConditionEngine {
         // Compare) compute theirs from their parts.
         const std::pair<int, std::initializer_list<const char*>> costs[] = {
             {0, {"Constant"}},
-            {1, {"Time", "DayOfWeek", "Month", "DayOfMonth", "Holiday", "Weather", "InteriorExterior", "LocationType",
+            {1, {"Time", "DayOfWeek", "Month", "DayOfMonth", "Holiday", "Weather", "WeatherKind", "InteriorExterior", "LocationType",
                  "LocationKeyword", "Location", "Swimming", "Sleeping", "Mounting", "InWater", "Combat", "IsPlayer",
                  "IsActor", "Sex", "IsPluginLoaded"}},
             {2, {"Temperature", "LoveScene", "Faction", "ActorValue", "Race", "HasSlotsEquipped", "QuestStage",
                  "QuestCategory", "GlobalVariable", "Random", "Sneaking", "Sitting", "InDialogue", "Bleedout", "WeaponDrawn",
                  "IsFollower", "HasKeyword", "HasMagicEffect", "HasPerk", "HasSpell", "WornHasKeyword", "Level", "ItemCount",
-                 "HasItem", "EquippedWeaponType", "Worldspace", "Hold", "InLocation", "InCell"}},
+                 "HasItem", "EquippedWeaponType", "ArmorWarmth", "Worldspace", "Hold", "InLocation", "InCell"}},
             {3, {"Game"}},
             {4, {"ScriptValue"}},
             {5, {"PapyrusCall", "StorageUtil"}},

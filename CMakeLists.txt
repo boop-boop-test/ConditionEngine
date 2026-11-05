@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 project(
     ConditionEngine
-    VERSION 1.3.0
+    VERSION 1.4.0
     DESCRIPTION "Reusable condition/expression evaluator for Skyrim SKSE plugins."
     LANGUAGES CXX)
 
@@ -111,6 +111,9 @@ set(CONDITION_ENGINE_HEADERS
     include/ConditionEngine/Values/PushedValues.h
     include/ConditionEngine/Values/RefreshOn.h
     include/ConditionEngine/Values/ValueNodes.h
+    include/ConditionEngine/Gear/ArmorProtection.h
+    include/ConditionEngine/Weather/WeatherProfile.h
+    include/ConditionEngine/Weather/WeatherProfiles.h
 )
 
 set(CONDITION_ENGINE_SOURCES
@@ -153,6 +156,9 @@ set(CONDITION_ENGINE_SOURCES
     src/Conditions/CompareCondition.cpp
     src/Values/PushedValues.cpp
     src/Values/RefreshOn.cpp
+    src/Gear/ArmorProtection.cpp
+    src/Weather/WeatherProfile.cpp
+    src/Weather/WeatherProfiles.cpp
 )
 
 ###############################################################################
@@ -160,7 +166,7 @@ set(CONDITION_ENGINE_SOURCES
 # (generated/ConditionEngine/BuiltinPresets.inc, read by src/Presets.cpp), so they ship
 # with every copy of the DLL, bundled ones included. Editing a file re-runs configure.
 ###############################################################################
-set(CONDITIONENGINE_BUILTIN_PRESETS presets/ConditionEngine_Survival.json)
+set(CONDITIONENGINE_BUILTIN_PRESETS presets/ConditionEngine_Survival.json presets/ConditionEngine_Weather.json)
 set(CONDITIONENGINE_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
 set(_ce_preset_arrays "")
 set(_ce_preset_entries "")
@@ -245,7 +251,7 @@ source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES
 ###############################################################################
 option(CONDITIONENGINE_BUILD_TESTS "Build ConditionEngine unit tests" ${PROJECT_IS_TOP_LEVEL})
 if(PROJECT_IS_TOP_LEVEL AND CONDITIONENGINE_BUILD_TESTS)
-    add_executable(condition-engine-tests tests/ExpressionTests.cpp tests/ValueTests.cpp tests/Benchmark.cpp ${CONDITION_ENGINE_SOURCES})
+    add_executable(condition-engine-tests tests/ExpressionTests.cpp tests/ValueTests.cpp tests/WeatherTests.cpp tests/GearTests.cpp tests/Benchmark.cpp ${CONDITION_ENGINE_SOURCES})
     target_compile_definitions(condition-engine-tests PRIVATE CONDITIONENGINE_STATIC)
     target_include_directories(condition-engine-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include "${CONDITIONENGINE_GENERATED_DIR}")
     target_link_libraries(condition-engine-tests PRIVATE CommonLibSSE::CommonLibSSE spdlog::spdlog)

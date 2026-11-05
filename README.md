@@ -20,6 +20,8 @@ How-to guides (adding, reading and watching conditions, registering your own typ
 - **Self-describing types**: every type publishes a schema (its fields, value types, labels, defaults, allowed values and category). The catalog (`ConditionEngine_GetCatalog`, Papyrus `GetCatalog`) and a generated JSON Schema (`ConditionEngine_GetJsonSchema`) let editors and other mods offer any condition without knowing how it works.
 - **Values**: the number a numeric type compares, read on its own (`ActorValue(Health, usePercentage=true)`, `Level`, `Game(GetLevel)`, `PapyrusCall(...)`), with arithmetic (`$hunger * (1 - $light)`, `clamp`, `min`, `max`, `abs`, `lerp`, `piecewise`, `steps`). Named values (`$name`) come from presets, plugins or scripts, can be pushed from Papyrus (`SetValue`), and can be watched with a non-blocking per-frame read. Conditions compare them: `$vampire_hunger > 80`.
 - **Shared survival needs**, built in: `$hunger`, `$fatigue` and `$cold` (0-100, with mild / moderate / severe at 25 / 50 / 75), `$hunger_stage` etc. (0-3) and `@HungerMild` ... `@ColdSevere`. Each reads the first installed survival mod that tracks the actor: Frostfall, SunHelm, Last Seed, iNeed or Survival Mode for the player, SeverActions for its followers. Papyrus `GetValueSource` says which one answered. The source order and what each mod maps to are in [Survival needs](docs/survival.md).
+- **Warmth, coverage, dirt and blood**, built in: `$warmth` and `$coverage` (how warmly dressed, how well rain and snow are kept off) for any actor from the worn armor on Frostfall's scale (`ArmorWarmth(Warmth)`), with Survival Mode's warm and cold armor keywords for vanilla gear and Frostfall's totals for the player; `$dirt` and `$blood` from Bathing in Skyrim (player and tracked bathers), Dirt and Blood (player, bandits, laborers, wounded NPCs) or Keep It Clean; `@WarmthPoor`, `@OutsideUnderdressed`, `@DirtSevere`, ... See [Survival needs](docs/survival.md#warmth-and-coverage).
+- **Weather from any weather mod**, built in: `$weather_rain`, `$weather_snow`, `$weather_storm`, `$weather_fog`, `$weather_wind`, `$weather_ash`, `$weather_sand` and more (0-100, light / moderate / heavy at 25 / 50 / 75), `@WeatherRain`, `@WeatherBlizzard`, `@OutsideInRain` ... and `$season`. Each weather is read from its own record (classification, particles, wind, lightning, fog, editor ID), so vanilla and modded weathers alike work. It was checked against Obsidian, Cathedral, Azurite, Vivid, True Storms, Climates of Tamriel, Rustic and Aequinoctium. `WeatherKind(Rain) >= 75` reads one kind, and `Weather(...)` also takes `Stormy`, `Blizzard`, `Foggy`, ... or an editor ID glob. See [Weather](docs/weather.md).
 - **Extensible**: other plugins can register their own condition types, with schemas, from C++ (`TypeBuilder`) or through the C API (`ConditionEngine_RegisterType`). Those types then appear in any editor that reads the catalog.
 
 ## Requirements (players)
@@ -132,6 +134,8 @@ In game, `ce` in the console (it takes over the unused vanilla `TestCode` comman
 - `ce evalfor <actor> <expression>`: the same for `player`, `selected`, a form ID (`14`, `0x14|Skyrim.esm`), an editor ID or a loaded actor's name
 - `ce list [filter]`: named values with their current numbers and named conditions with their states
 - `ce stats [on|off|reset]`: watches, tick times, Papyrus calls and the costliest types (`on` times evaluations)
+- `ce weather`: the current weather, what each kind reads and why (and the outgoing weather during a change)
+- `ce warmth`: each worn item and the warmth and coverage it adds
 
 Quote an expression that has commas: `ce eval "Time(20, 6) && $hunger > 50"`.
 
@@ -209,7 +213,7 @@ Put `*.json` files in `Data/SKSE/Plugins/ConditionEngine/`:
 }
 ```
 
-The survival values ([Survival needs](docs/survival.md)) are built into the DLL and load before these files, so a file that defines the same name replaces them.
+The survival values ([Survival needs](docs/survival.md)) and weather values ([Weather](docs/weather.md)) are built into the DLL and load before these files, so a file that defines the same name replaces them. A `"weathers"` section corrects how a weather reads: `{"weathers": {"TS_*_Heavy": {"fog": 75}}}`.
 
 Value definitions are value text, or an object with `expr`, `label`, `unit`, `range`, `integer`, `fallback` (read while not OK), `enabledWhen`, `scope` (`auto`/`actor`/`global`; auto is inferred from what the value reads), `pushed`, `graceSeconds` (hold the last good value after a failed read) and `requiresPlugins`.
 
