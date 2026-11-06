@@ -1038,9 +1038,10 @@
         if (named && named.kind === kind && String(named.name).toLowerCase() === String(n.name).toLowerCase()) item.classList.add('selected');
         const top = el('div', 'top');
         top.appendChild(el('span', 'name', it.label || n.name));
-        top.appendChild(el('span', 'val', n.isUser ? 'yours' : ''));
+        top.appendChild(el('span', 'val', n.isUser ? 'yours' : it.offer === 'nowhere' ? 'not in pickers' : ''));
         item.appendChild(top);
-        item.appendChild(el('div', 'id', (kind === 'value' ? '$' : '@') + n.name + '  ·  ' + (n.isUser ? 'made by you' : 'from ' + (it.sourceLabel || it.source || '?'))));
+        const feeds = it.provides ? '  ·  feeds ' + [].concat(it.provides).map((p) => '$' + p).join(', ') : '';
+        item.appendChild(el('div', 'id', (kind === 'value' ? '$' : '@') + n.name + '  ·  ' + (n.isUser ? 'made by you' : 'from ' + (it.sourceLabel || it.source || '?')) + feeds));
         const expr = n.json ? (typeof n.json === 'string' ? n.json : n.json.expr) : it.expression;
         if (expr) item.appendChild(el('div', 'tagline', expr));
         item.addEventListener('click', () => openNamed(kind, n.name));
@@ -1135,7 +1136,92 @@
     $('n-delete').classList.toggle('hidden', !editable || named.isNew);
     $('n-save').classList.toggle('hidden', !editable);
     $('n-why').classList.add('hidden');
+    renderNamedLinks();
     renderNamedSnippets();
+  }
+
+  // ── How a named item ties to the others ────────────────────────────────────
+  // A combined value's sources (highest priority first), the value a source feeds, what an expression reads and
+  // what reads this one (the levels: "@HungerMild  >= 25", "$hunger_stage"). Each opens on click.
+  const lc = (s) => String(s || '').toLowerCase();
+  function exprOfNamed(n) {
+    const j = n.json;
+    return j ? (typeof j === 'string' ? j : j.expr || '') : (n.item || {}).expression || '';
+  }
+  function refsIn(expr) {
+    const out = { value: [], condition: [] };
+    String(expr || '').replace(/([$@])([A-Za-z_][A-Za-z0-9_]*)/g, (m, sigil, name) => {
+      const list = out[sigil === '$' ? 'value' : 'condition'];
+      if (!list.some((x) => lc(x) === lc(name))) list.push(name);
+      return m;
+    });
+    return out;
+  }
+  function mentions(expr, sigil, name) {
+    return new RegExp('\\' + sigil + name.replace(/[^A-Za-z0-9_]/g, '') + '(?![A-Za-z0-9_])', 'i').test(String(expr || ''));
+  }
+  // "$hunger >= 25" -> ">= 25", the level a condition picks out of the value
+  function thresholdOf(expr, name) {
+    const m = new RegExp('\\$' + name + '\\s*(>=|<=|==|!=|>|<)\\s*(-?[0-9.]+)', 'i').exec(String(expr || ''));
+    return m ? m[1] + ' ' + m[2] : '';
+  }
+  function renderNamedLinks() {
+    const box = $('n-links');
+    box.innerHTML = '';
+    const it = named && named.item || {};
+    if (!named || named.isNew || !catalog) { box.classList.add('hidden'); return; }
+    const isValue = named.kind === 'value';
+    const ref = (kind, name, extra, title) => {
+      const b = el('button', 'ref', (kind === 'value' ? '$' : '@') + name);
+      if (extra) b.appendChild(el('span', 'faint', extra));
+      const found = namedItems(kind).find((x) => lc(x.name) === lc(name));
+      if (found && found.item && found.item.offer === 'nowhere') b.title = (title ? title + '\n' : '') + 'Not offered in other mods\' pickers';
+      else if (title) b.title = title;
+      b.addEventListener('click', () => {
+        if (kind !== named.kind) setTab(kind === 'value' ? 'values' : 'conditions');
+        openNamed(kind, name);
+      });
+      return b;
+    };
+    const row = (what, refs, note) => {
+      if (!refs.length && !note) return;
+      const r = el('div', 'link-row');
+      r.appendChild(el('span', 'what', what));
+      for (const x of refs) r.appendChild(x);
+      if (note) r.appendChild(el('span', 'note', note));
+      box.appendChild(r);
+    };
+    const values = (catalog.namedValues || []);
+    if (isValue && Array.isArray(it.providers) && it.providers.length) {
+      const ps = it.providers.slice().sort((a, b) => (b.priority || 0) - (a.priority || 0));
+      row('Read from', ps.map((p) => ref('value', p.name, 'priority ' + p.priority)),
+        'for each actor the first one that answers wins; "Why, right now?" names it');
+    }
+    if (isValue && it.provides) {
+      for (const target of [].concat(it.provides)) {
+        const master = values.find((v) => lc(v.name) === lc(target));
+        const ps = (master && master.providers || []).slice().sort((a, b) => (b.priority || 0) - (a.priority || 0));
+        const rank = ps.findIndex((p) => lc(p.name) === lc(named.name));
+        row('Feeds', [ref('value', target, rank >= 0 ? (rank + 1) + ' of ' + ps.length : '')],
+          'used when no higher-priority source answers for the actor');
+      }
+    }
+    const own = refsIn(exprOfNamed(named));
+    row('Reads', own.value.filter((n) => lc(n) !== lc(named.name)).map((n) => ref('value', n))
+      .concat(own.condition.filter((n) => lc(n) !== lc(named.name)).map((n) => ref('condition', n))));
+    const sigil = isValue ? '$' : '@';
+    const users = [];
+    for (const kind of ['condition', 'value']) {
+      for (const n of namedItems(kind)) {
+        if (kind === named.kind && lc(n.name) === lc(named.name)) continue;
+        const e = exprOfNamed(n);
+        if (mentions(e, sigil, named.name)) users.push(ref(kind, n.name, isValue ? thresholdOf(e, named.name) : '', (n.item || {}).label));
+      }
+    }
+    row('Used by', users);
+    if (it.offer === 'nowhere') row('', [], 'Not offered in other mods\' pickers (No Talk Just Hands and the like); expressions, prompts and Papyrus still read it.');
+    else if (it.offer === 'owner') row('', [], 'Offered only in ' + (it.sourceLabel || it.owner || it.source) + '\'s own pickers.');
+    box.classList.toggle('hidden', !box.childNodes.length);
   }
 
   function renderNamedSnippets() {
@@ -1444,10 +1530,21 @@
       namedConditions: [
         { id: 'OutsideInRain', label: 'Outside in the rain', expression: 'WeatherKind(Rain) >= 25 && !InteriorExterior(true)', source: 'ConditionEngine', category: 'weather' },
         { id: 'Alarmed', label: 'Alarmed', expression: '$alarm >= 5', source: 'Dials', category: 'dials' },
-        { id: 'WarmthPoor', label: 'Poorly dressed for the cold', expression: '$warmth < 25', source: 'ConditionEngine', category: 'survival' }
+        { id: 'WarmthPoor', label: 'Poorly dressed for the cold', expression: '$warmth < 25', source: 'ConditionEngine', category: 'survival' },
+        { id: 'HungerMild', label: 'Hunger: mild or worse', expression: '$hunger >= 25', source: 'ConditionEngine', category: 'survival', offer: 'nowhere' },
+        { id: 'HungerModerate', label: 'Hunger: moderate or worse', expression: '$hunger >= 50', source: 'ConditionEngine', category: 'survival' },
+        { id: 'HungerSevere', label: 'Hunger: severe', expression: '$hunger >= 75', source: 'ConditionEngine', category: 'survival', offer: 'nowhere' }
       ].concat(Object.keys(userConditions).map((k) => ({ id: k, label: userConditions[k].label || k, expression: userConditions[k].expr, source: 'User', category: 'mine' }))),
       namedValues: [
-        { name: 'hunger', label: 'Hunger', expression: '', combined: true, source: 'ConditionEngine', category: 'survival', unit: '%' },
+        { name: 'hunger', label: 'Hunger', expression: '', combined: true, source: 'ConditionEngine', category: 'survival', unit: '%',
+          providers: [{ name: 'severactions_hunger', priority: 40 }, { name: 'sunhelm_hunger', priority: 80 }, { name: 'lastseed_hunger', priority: 70 }] },
+        { name: 'sunhelm_hunger', label: 'Hunger (SunHelm)', expression: 'piecewise(GlobalVariable("0xEAAE|SunHelmSurvival.esp"), 0, 0, 80, 25, 140, 50, 240, 75, 360, 100)',
+          source: 'SunHelm', sourceLabel: 'SunHelm', category: 'survival', unit: '%', offer: 'nowhere', provides: ['hunger'], priority: 80 },
+        { name: 'lastseed_hunger', label: 'Hunger (Last Seed)', expression: 'piecewise(GlobalVariable("0x29CD|LastSeed.esp"), 0, 0, 40, 25, 60, 50, 80, 75, 120, 100)',
+          source: 'LastSeed', sourceLabel: 'Last Seed', category: 'survival', unit: '%', offer: 'nowhere', provides: ['hunger'], priority: 70 },
+        { name: 'severactions_hunger', label: 'Hunger (SeverActions)', expression: 'clamp(PapyrusCall(SeverActionsNative, Native_Survival_GetHunger), 0, 100)',
+          source: 'SeverActions', sourceLabel: 'SeverActions', category: 'survival', unit: '%', offer: 'nowhere', provides: ['hunger'], priority: 40 },
+        { name: 'hunger_stage', label: 'Hunger stage', expression: 'steps($hunger, 25, 50, 75)', source: 'ConditionEngine', category: 'survival', offer: 'nowhere' },
         { name: 'alarm', label: 'Alarm', pushed: true, source: 'Dials', category: 'dials' }
       ].concat(Object.keys(userValues).map((k) => ({ name: k, label: userValues[k].label || k, expression: userValues[k].expr, source: 'User', category: 'mine', unit: userValues[k].unit })))
     });

@@ -27,6 +27,13 @@ repository), so every copy of the DLL has them, including copies bundled with ot
 | `@DirtMild`, `@DirtModerate`, `@DirtSevere`, `@BloodMild`, `@BloodSevere` | at least that level |
 | `$sunhelm_hunger`, `$frostfall_cold`, ... | one source on its own (table below) |
 
+Other mods' pickers (No Talk Just Hands and the like) offer one entry per need: the seven values `$hunger`,
+`$fatigue`, `$cold`, `$warmth`, `$coverage`, `$dirt`, `$blood`, and `@HungerModerate`, `@FatigueModerate`,
+`@ColdModerate`, `@DirtModerate`, `@BloodMild`, `@WarmthPoor`, `@OutsideUnderdressed`, `@OutsideGettingSoaked`. The
+sources, the stage values and the other tiers have `"offer": "nowhere"`. They still work in expressions, prompts,
+Papyrus and OAR, and ConditionEngine's own editor lists them all: a combined value shows its sources by priority and
+the conditions that read it at which level, and a source shows the value it feeds.
+
 ```papyrus
 Float hunger = ConditionEngine.GetValue(akActor, "hunger")             ; 0-100, 0 when nothing tracks the actor
 String source = ConditionEngine.GetValueSource(akActor, "hunger")      ; "sunhelm_hunger", or "" when no source

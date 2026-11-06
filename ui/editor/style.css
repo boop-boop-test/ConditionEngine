@@ -114,6 +114,13 @@ label.wide { margin-top: 10px; }
 .dollar { font-family: var(--mono); color: var(--gold); }
 .id-input { font-family: var(--mono); font-size: 13px; width: 240px; background: transparent; border-color: transparent; padding: 2px 4px; color: var(--gold); }
 .id-input:hover { border-color: var(--line); }
+.links .link-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; margin: 2px 0 6px; font-size: 12px; }
+.links .link-row:last-child { margin-bottom: 0; }
+.links .what { color: var(--muted); margin-right: 2px; }
+.links .ref { font-family: var(--mono); font-size: 12px; padding: 1px 8px; border-radius: 10px; background: var(--card-2); border: 1px solid var(--line); color: inherit; cursor: pointer; }
+.links .ref:hover { border-color: var(--muted); }
+.links .ref .faint { color: var(--faint); margin-left: 4px; }
+.links .note { color: var(--faint); font-size: 11px; }
 .badge { margin-left: 10px; font-size: 11px; padding: 2px 8px; border-radius: 10px; background: var(--card-2); color: var(--muted); border: 1px solid var(--line); }
 .ed-actions { display: flex; gap: 6px; flex: none; }
 
