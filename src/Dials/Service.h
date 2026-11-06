@@ -154,6 +154,17 @@ namespace ConditionEngine::Dials {
         std::atomic<bool> publishQueued_{false};
         std::chrono::steady_clock::time_point lastTick_{};
 
+        // Mod events rules sent ("send"): sent at the start of the next tick, so two dials that answer
+        // each other's events go one round per tick instead of looping at once
+        void QueueSends();
+        void FlushSends();
+        std::mutex outboxMutex_;
+        std::vector<Send> outbox_;
+
+    public:
+        // While a dial's event is being sent (main thread): that dial's id, so it does not hear it
+        static const std::string& SendingDial();
+
         std::mutex subscribersMutex_;
         std::map<std::uint32_t, std::pair<ChangedFn, void*>> subscribers_;
         std::uint32_t nextSubscriber_ = 1;

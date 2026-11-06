@@ -455,6 +455,31 @@ namespace ConditionEngine::Dials {
         const auto key = CellKey(dial, subject);
         host_.SetEventNumber(info ? info->number : 0.0);
 
+        if (rule.action == ActionKind::Send) {
+            // The number: sendNumber, or the dial's value for the actor
+            const double current = def.Exposed(RawValue(dial, key));
+            std::optional<double> number = rule.value.IsSet() ? AmountOf(compiled, rule, subject) : std::optional<double>(current);
+            if (!number) return;
+            const auto cause = CauseOf(dial, index);
+            if (sendsSinceTick_ >= kMaxSendsPerTick) {
+                ++droppedSinceTick_;
+            } else {
+                ++sendsSinceTick_;
+                sends_.push_back({def.id, rule.send, rule.sendText, *number, subject ? subject : kPlayer});
+                log_.push_back({now_, def.id, key, current, current, "sent " + rule.send + " (" + cause + ")"});
+                while (log_.size() > kLogSize) log_.pop_front();
+            }
+            if (!rule.tell.empty()) {
+                const auto option = def.OptionLabel(current);
+                notes_.push_back({def.id, subject ? subject : kPlayer, rule.tell, rule.tellNarration, current,
+                                  option.empty() ? def.label : option});
+            }
+            auto& st = compiled.state[key];
+            st.lastFiredReal = now_;
+            st.lastFiredGame = gameHours_;
+            return;
+        }
+
         std::optional<double> amount;
         if (rule.action != ActionKind::Toggle && rule.action != ActionKind::Reset) {
             amount = AmountOf(compiled, rule, subject);
@@ -556,6 +581,15 @@ namespace ConditionEngine::Dials {
 
     void Engine::Tick(double realDt, double gameHours, const std::vector<ActorKey>& loaded) {
         std::lock_guard lock(mutex_);
+        // A new window for sends: report what the last one refused
+        if (droppedSinceTick_ > 0) {
+            log_.push_back({now_, "", 0, 0, 0,
+                            "dropped " + std::to_string(droppedSinceTick_) + " mod events: rules may send " +
+                                std::to_string(kMaxSendsPerTick) + " in one tick"});
+            while (log_.size() > kLogSize) log_.pop_front();
+        }
+        sendsSinceTick_ = 0;
+        droppedSinceTick_ = 0;
         realDt = std::max(0.0, realDt);
         now_ += realDt;
         const double previousGame = gameClockKnown_ ? gameHours_ : gameHours;
@@ -687,6 +721,8 @@ namespace ConditionEngine::Dials {
                 if (rule.enabled && rule.trigger == TriggerKind::Event && IEquals(rule.event, name)) {
                     // A dial does not hear its own change notices (no feedback loop)
                     if (IEquals(name, "Dials_Changed") && IEquals(info.text, dial->def.id)) continue;
+                    // ... nor the events its own rules sent
+                    if (!info.fromDial.empty() && IEquals(info.fromDial, dial->def.id)) continue;
                     RunEvent(*dial, i, info);
                 }
             }
@@ -724,6 +760,9 @@ namespace ConditionEngine::Dials {
         pending_.clear();
         changes_.clear();
         notes_.clear();
+        sends_.clear();
+        sendsSinceTick_ = 0;
+        droppedSinceTick_ = 0;
         gameClockKnown_ = false;
     }
 
@@ -856,6 +895,18 @@ namespace ConditionEngine::Dials {
         std::vector<Note> out;
         out.swap(notes_);
         return out;
+    }
+
+    std::vector<Send> Engine::TakeSends() {
+        std::lock_guard lock(mutex_);
+        std::vector<Send> out;
+        out.swap(sends_);
+        return out;
+    }
+
+    std::size_t Engine::DroppedSends() const {
+        std::lock_guard lock(mutex_);
+        return droppedSinceTick_;
     }
 
     bool Engine::HasChanges() const {

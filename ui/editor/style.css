@@ -298,3 +298,6 @@ button.link:hover { color: var(--gold); }
 #n-value-tools { flex-wrap: wrap; }
 @media (max-width: 760px) { .rule-cond { margin-left: 0; } .grid.basics { grid-template-columns: 1fr 1fr; } }
 .expr-wrap > button, .pk-foot button, .pk-row button, .cond-row button { white-space: nowrap; flex: none; }
+.rule-line .fields.wrap { flex-wrap: wrap; }
+.rule-line .fields.wrap input { flex: 0 0 auto; width: auto; }
+.rule-line .fields .pair { display: inline-flex; align-items: center; gap: 6px; }

@@ -38,8 +38,8 @@ namespace ConditionEngine::Dials {
             {GameEvent::SkillUp, "SkillUp", "a player skill went up; text = the skill (OneHanded, Destruction, ...)"},
         }};
 
-        constexpr std::array<std::string_view, 8> kActionNames = {"set", "add", "multiply", "toggle",
-                                                                  "reset", "cycle", "rate", "approach"};
+        constexpr std::array<std::string_view, 9> kActionNames = {"set", "add", "multiply", "toggle", "reset",
+                                                                  "cycle", "rate", "approach", "send"};
         constexpr std::array<std::string_view, 6> kTriggerNames = {"on", "event", "when", "while", "every", "key"};
 
         struct KeyEntry {
@@ -137,7 +137,7 @@ namespace ConditionEngine::Dials {
             "label", "enabled", "on", "event", "when", "while", "every", "key", "edge", "form", "keyword", "text",
             "menu", "anim", "skill", "other", "otherIf", "if", "actor", "set", "add", "multiply", "toggle", "reset",
             "cycle", "rate", "approach", "for", "halfLife", "clock", "cooldown", "chance", "skyrimnet", "aiAction",
-            "description", "tell", "tellAs"};
+            "description", "tell", "tellAs", "send", "sendNumber", "sendText"};
 
         const std::set<std::string, std::less<>> kDialKeys = {
             "label", "description", "category", "icon", "unit", "enabled", "kind", "range", "min", "max", "default",
@@ -259,8 +259,25 @@ namespace ConditionEngine::Dials {
                 r.action = ActionKind::Reset;
             }
             if (r.action == ActionKind::Cycle && !r.value.IsSet()) r.value.constant = 1.0;
+            if (j.contains("send")) {
+                ++actions;
+                r.action = ActionKind::Send;
+                if (!ReadString(j, "send", r.send, errors, where) || Trim(r.send).empty()) {
+                    errors.push_back(where + ": \"send\" needs the mod event's name");
+                } else if (IsReservedEventName(r.send)) {
+                    errors.push_back(where + ": \"send\" cannot send '" + r.send +
+                                     "' (ConditionEngine and SkyrimNet use that name)");
+                }
+                if (auto it = j.find("sendNumber"); it != j.end()) {
+                    if (auto a = Amount::FromJson(*it)) r.value = *a;
+                    else errors.push_back(where + ": \"sendNumber\" must be a number or a value expression");
+                }
+                ReadString(j, "sendText", r.sendText, errors, where);
+            } else if (j.contains("sendNumber") || j.contains("sendText")) {
+                warnings.push_back(where + ": \"sendNumber\" and \"sendText\" only apply to \"send\"");
+            }
             if (actions == 0) {
-                errors.push_back(where + ": no action (set, add, multiply, toggle, reset, cycle, rate or approach)");
+                errors.push_back(where + ": no action (set, add, multiply, toggle, reset, cycle, rate, approach or send)");
             }
             if (actions > 1) errors.push_back(where + ": more than one action");
 
@@ -316,6 +333,7 @@ namespace ConditionEngine::Dials {
                 if (r.forDuration <= 0) errors.push_back(where + ": \"for\" must be more than 0");
                 if (r.IsContinuous()) errors.push_back(where + ": \"for\" does not work with \"while\" (it ends on its own)");
                 if (r.action == ActionKind::Multiply) errors.push_back(where + ": \"for\" does not work with multiply");
+                if (r.action == ActionKind::Send) errors.push_back(where + ": \"for\" does not work with send (a sent event cannot be undone)");
             }
             if (ReadNumber(j, "halfLife", r.halfLife, errors, where) && r.halfLife <= 0) {
                 errors.push_back(where + ": \"halfLife\" must be more than 0");
@@ -338,7 +356,9 @@ namespace ConditionEngine::Dials {
 
             // ── Trigger and action fit together ──────────────────────────────
             const bool continuous = r.action == ActionKind::Rate || r.action == ActionKind::Approach;
-            if (r.IsContinuous() && actions == 1 && !continuous && r.action != ActionKind::Set) {
+            if (r.IsContinuous() && r.action == ActionKind::Send) {
+                errors.push_back(where + ": \"send\" does not work with \"while\" (it would send every tick); use \"when\"");
+            } else if (r.IsContinuous() && actions == 1 && !continuous && r.action != ActionKind::Set) {
                 errors.push_back(where + ": \"while\" works with rate, approach or set (held while true)");
             }
             if (!r.IsContinuous() && continuous && triggers == 1) {
@@ -380,6 +400,11 @@ namespace ConditionEngine::Dials {
     }
 
     std::string_view ActionName(ActionKind kind) { return kActionNames[static_cast<std::size_t>(kind)]; }
+
+    bool IsReservedEventName(std::string_view name) {
+        const auto n = Lower(Trim(std::string(name)));
+        return n == "dials_changed" || n == "dials_signal" || n.starts_with("skyrimnet:") || n.starts_with("skyrimnetaction:");
+    }
     std::string_view TriggerName(TriggerKind kind) { return kTriggerNames[static_cast<std::size_t>(kind)]; }
 
     bool IsValidId(std::string_view id) {
@@ -468,6 +493,11 @@ namespace ConditionEngine::Dials {
         switch (action) {
             case ActionKind::Toggle: j["toggle"] = true; break;
             case ActionKind::Reset: j["reset"] = true; break;
+            case ActionKind::Send:
+                j["send"] = send;
+                if (value.IsSet()) j["sendNumber"] = value.ToJson();
+                if (!sendText.empty()) j["sendText"] = sendText;
+                break;
             default: j[std::string(ActionName(action))] = value.ToJson(); break;
         }
         if (!form.empty()) j["form"] = form;

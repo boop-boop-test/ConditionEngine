@@ -88,11 +88,35 @@ check after a load, or after an actor comes into range, only records the state: 
 | `cycle` | `"cycle": 1` | Next option of a choice dial (`-1`: previous); numbers step and wrap |
 | `rate` | `"rate": -1` | `while` only: change per second (per game hour with `"clock": "game"`) |
 | `approach` | `"approach": 0, "halfLife": 30` | `while` only: move toward a target, halfway every `halfLife` |
+| `send` | `"send": "MyMod_FightOver"` | Sends an SKSE mod event for other mods' scripts (below). Does not change the dial |
 
 Amounts are numbers or ConditionEngine value expressions: `"rate": "-$hunger / 100"`, `"set": "$cold"`,
 `"approach": "ActorValue(Health, usePercentage=true) * 100"`. Inside a rule, `DialsEvent` reads the event's
 number (a mod event's number, the count of items added, the hours slept). An expression that cannot be read
 for the actor right now (a missing mod, an unloaded actor) makes the rule do nothing.
+
+### Sending mod events
+
+`send` lets a dial drive other mods without Papyrus of your own:
+
+```json
+{"when": "Combat", "edge": "falling", "send": "MyMod_FightOver", "sendNumber": "$alarm", "sendText": "calm"}
+```
+
+Scripts receive it as any mod event (`RegisterForModEvent("MyMod_FightOver", "OnFightOver")`): strArg =
+`sendText` (empty by default), numArg = `sendNumber` (a number or a value expression; the dial's value by
+default), sender = the actor the rule acted on (the player for global dials fired by keys and timers).
+
+- Only rules that fire once can send: `on`, `event`, `when`, `every`, `key`, `skyrimnet`, `aiAction`. Not
+  `while` (it would send every tick), and not with `for` (a sent event cannot be undone).
+- Events go out at the start of the next tick (`iTickMs`), never at once. Two dials that answer each other's
+  events go one round per tick instead of looping; `cooldown` slows them down further.
+- A dial does not hear the events its own rules send. Other dials do.
+- Rules send at most 32 mod events between two ticks. The rest are dropped, and the editor's activity list and
+  the SKSE log say how many.
+- `Dials_Changed`, `Dials_Signal` and names starting with `SkyrimNet:` or `SkyrimNetAction:` cannot be sent.
+- `if`, `cooldown`, `chance`, `actor`, `tell` and the event filters work as for any rule; the editor's Test
+  button sends too.
 
 ### Extras
 

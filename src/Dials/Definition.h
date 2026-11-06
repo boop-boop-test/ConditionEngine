@@ -16,7 +16,7 @@
 //   }
 //
 // A rule is one trigger (on / event / when / while / every / key) and one action
-// (set / add / multiply / toggle / reset / cycle / rate / approach), plus optional
+// (set / add / multiply / toggle / reset / cycle / rate / approach / send), plus optional
 // filters and modifiers (if, for, cooldown, chance, actor, ...).
 
 #include <nlohmann/json.hpp>
@@ -39,7 +39,12 @@ namespace ConditionEngine::Dials {
 
     enum class TriggerKind { Game, Event, When, While, Every, Key };
     enum class Edge { Rising, Falling, Both };
-    enum class ActionKind { Set, Add, Multiply, Toggle, Reset, Cycle, Rate, Approach };
+    // Send: an SKSE mod event (SendModEvent) for other mods' scripts, not a change of the dial
+    enum class ActionKind { Set, Add, Multiply, Toggle, Reset, Cycle, Rate, Approach, Send };
+
+    // Mod event names a rule may not send: ConditionEngine's own (Dials_Changed, Dials_Signal) and the
+    // names SkyrimNet triggers use inside the engine (SkyrimNet:..., SkyrimNetAction:...)
+    bool IsReservedEventName(std::string_view name);
 
     // Which actor a rule acts on. Auto: the event's own actor (the one hit, the one who
     // cast, the mod event's sender), the player for keys and timers.
@@ -95,7 +100,9 @@ namespace ConditionEngine::Dials {
 
         // ── Action ───────────────────────────────────────────────────────────
         ActionKind action = ActionKind::Set;
-        Amount value;            // set / add / multiply / rate / approach target / cycle step
+        Amount value;            // set / add / multiply / rate / approach target / cycle step / send's number
+        std::string send;        // send: the mod event's name
+        std::string sendText;    // send: its string argument
         double forDuration = 0;  // "for": undo after this long (set, add, toggle, cycle, reset)
         double halfLife = 0;     // approach
         Clock clock = Clock::Real;

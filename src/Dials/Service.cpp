@@ -13,6 +13,8 @@ namespace ConditionEngine::Dials {
         constexpr const char* kOwner = "Dials";
         constexpr const char* kChangedEvent = "Dials_Changed";
 
+        thread_local std::string tl_sendingDial;  // see Service::SendingDial
+
         std::string Hex(ActorKey key) { return std::format("0x{:08X}", key); }
 
         nlohmann::json ParseFile(const std::filesystem::path& path, std::string& error) {
@@ -563,12 +565,47 @@ namespace ConditionEngine::Dials {
                 if (actor && !actor->IsDeleted() && actor->GetFormID() != kPlayer) loaded.push_back(actor->GetFormID());
             }
         }
+        if (const auto dropped = engine_.DroppedSends()) {
+            SKSE::log::warn("Dials: dropped {} mod events that rules sent: at most {} in one tick", dropped, kMaxSendsPerTick);
+        }
+        FlushSends();
         engine_.Tick(realDt, gameHours, loaded);
         Publish();
         if (onTick) onTick();
     }
 
+    const std::string& Service::SendingDial() { return tl_sendingDial; }
+
+    void Service::QueueSends() {
+        auto sends = engine_.TakeSends();
+        if (sends.empty()) return;
+        std::lock_guard lock(outboxMutex_);
+        for (auto& s : sends) outbox_.push_back(std::move(s));
+    }
+
+    // Main thread, at the start of a tick: the mod events rules sent since the last one
+    void Service::FlushSends() {
+        std::vector<Send> sends;
+        {
+            std::lock_guard lock(outboxMutex_);
+            sends.swap(outbox_);
+        }
+        if (sends.empty()) return;
+        auto* source = SKSE::GetModCallbackEventSource();
+        if (!source) return;
+        const bool verbose = GetSettings().verbose;
+        for (const auto& s : sends) {
+            if (verbose) SKSE::log::info("Dials: {} sends {} ({}, {}) for {}", s.dial, s.name, s.text, s.number, ActorName(s.actor));
+            SKSE::ModCallbackEvent event{RE::BSFixedString(s.name), RE::BSFixedString(s.text), static_cast<float>(s.number),
+                                         s.actor ? ActorOf(s.actor) : nullptr};
+            tl_sendingDial = s.dial;  // the mod event sink reads it while SendEvent runs
+            source->SendEvent(&event);
+            tl_sendingDial.clear();
+        }
+    }
+
     void Service::Publish() {
+        QueueSends();
         auto changes = engine_.TakeChanges();
         if (changes.empty()) {
             if (auto notes = engine_.TakeNotes(); !notes.empty() && onNotes) onNotes(std::move(notes));
@@ -619,6 +656,8 @@ namespace ConditionEngine::Dials {
     void Service::OnSessionEnd() {
         session_.store(false);
         engine_.ClearValues();
+        std::lock_guard lock(outboxMutex_);
+        outbox_.clear();
     }
 
     void Service::OnSessionStart() {

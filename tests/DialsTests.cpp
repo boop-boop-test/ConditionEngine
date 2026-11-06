@@ -635,6 +635,90 @@ namespace {
         Check(!e.Eligible("manic", 2, kLydia), "not offered once calm");
     }
 
+    // ── send: rules that send SKSE mod events ───────────────────────────────
+    void SendTests() {
+        auto alarm = Parse("alarm", R"({
+            "range": [0, 10],
+            "rules": [
+                {"on": "CombatStart", "set": 10},
+                {"when": "Combat", "edge": "falling", "send": "MyMod_FightOver", "sendText": "calm", "cooldown": 5},
+                {"event": "MyMod_Ping", "send": "MyMod_Pong", "sendNumber": "$hunger"}
+            ]
+        })");
+        Check(alarm.rules[1].action == ActionKind::Send && alarm.rules[1].send == "MyMod_FightOver" &&
+                  alarm.rules[1].sendText == "calm" && !alarm.rules[1].value.IsSet(),
+              "send: name and text, no number (the dial's value)");
+        Check(alarm.rules[2].value.expr == "$hunger", "sendNumber as a value expression");
+        const auto again = ParseDial("alarm", alarm.ToJson(), "test");
+        Check(again.def && again.def->ToJson() == alarm.ToJson(), "send survives a round trip: " + alarm.ToJson().dump());
+
+        Check(HasError(R"({"rules": [{"while": true, "send": "X"}]})", "every tick"), "send does not work with while");
+        Check(HasError(R"({"rules": [{"on": "Hit", "send": "X", "for": 5}]})", "cannot be undone"), "send with for");
+        Check(HasError(R"({"rules": [{"on": "Hit", "send": ""}]})", "needs the mod event"), "send needs a name");
+        Check(HasError(R"({"rules": [{"on": "Hit", "send": "Dials_Changed"}]})", "cannot send"), "Dials_Changed is reserved");
+        Check(HasError(R"({"rules": [{"on": "Hit", "send": "skyrimnet:dialogue"}]})", "cannot send"), "SkyrimNet names are reserved");
+        Check(HasError(R"({"rules": [{"on": "Hit", "send": "X", "add": 1}]})", "more than one action"), "send is the one action");
+        Check(!ParseDial("d", nlohmann::json::parse(R"({"rules": [{"on": "Hit", "add": 1, "sendText": "x"}]})"), "test").warnings.empty(),
+              "sendText without send warns");
+
+        FakeHost host;
+        host.values["$hunger"][0] = 42;
+        Engine e(host);
+        Define(e, alarm);
+        e.Tick(0.2, 10.0, {kPlayer});
+        e.TakeChanges();
+
+        // The dial's value goes with the event; the dial itself does not change
+        host.flags["Combat"][0] = true;
+        e.Tick(0.2, 10.0, {kPlayer});
+        e.Set("alarm", 0, 7, "test");
+        host.flags["Combat"][0] = false;
+        e.Tick(0.2, 10.0, {kPlayer});
+        auto sends = e.TakeSends();
+        Check(sends.size() == 1 && sends[0].name == "MyMod_FightOver" && sends[0].text == "calm" && sends[0].number == 7 &&
+                  sends[0].dial == "alarm" && sends[0].actor == kPlayer,
+              "the fight ends: MyMod_FightOver with the dial's value 7");
+        Check(Get(e, "alarm") == 7, "send does not change the dial");
+        bool logged = false;
+        for (const auto& l : e.RecentLog()) logged = logged || l.cause.starts_with("sent MyMod_FightOver");
+        Check(logged, "the editor's log shows the sent event");
+
+        // sendNumber, and the cooldown applies as for any rule
+        EventInfo ping;
+        ping.actor = kPlayer;
+        e.OnModEvent("MyMod_Ping", ping);
+        sends = e.TakeSends();
+        Check(sends.size() == 1 && sends[0].name == "MyMod_Pong" && sends[0].number == 42, "sendNumber $hunger = 42");
+
+        // A dial does not hear the events its own rules sent; other dials do
+        auto echo = Parse("echo", R"({"rules": [{"event": "MyMod_Pong", "add": 1}]})");
+        Define(e, echo);
+        EventInfo pong;
+        pong.actor = kPlayer;
+        pong.fromDial = "echo";
+        e.OnModEvent("MyMod_Pong", pong);
+        Check(Get(e, "echo") == 0, "a dial does not hear its own sent event");
+        pong.fromDial = "alarm";
+        e.OnModEvent("MyMod_Pong", pong);
+        Check(Get(e, "echo") == 1, "another dial's sent event is heard");
+
+        // At most kMaxSendsPerTick between two ticks; the rest are dropped and logged
+        e.Tick(0.2, 10.0, {kPlayer});
+        for (int i = 0; i < 40; ++i) e.OnModEvent("MyMod_Ping", ping);
+        sends = e.TakeSends();
+        Check(sends.size() == kMaxSendsPerTick, "40 pings in one tick send " + std::to_string(sends.size()) + " pongs (the cap)");
+        Check(e.DroppedSends() == 40 - kMaxSendsPerTick, "the rest are counted as dropped");
+        e.Tick(0.2, 10.0, {kPlayer});
+        bool dropLogged = false;
+        for (const auto& l : e.RecentLog()) dropLogged = dropLogged || l.cause.starts_with("dropped 8 mod events");
+        Check(dropLogged && e.DroppedSends() == 0, "the next tick logs the drop and opens a new window");
+        e.OnModEvent("MyMod_Ping", ping);
+        Check(e.TakeSends().size() == 1, "after the tick, rules can send again");
+
+        // The editor's Test button sends too
+        Check(e.FireRule("alarm", 1, kPlayer) && e.TakeSends().size() == 1, "Test runs a send rule");
+    }
+
     // ── The shipped examples (and so the editor's templates) are valid ───────
     void ExampleFileTests() {
 #ifdef DIALS_SOURCE_DIR
@@ -669,5 +753,6 @@ void RunDialsTests(void (*check)(bool ok, const std::string& what)) {
     PublishTests();
     PersistenceTests();
     SkyrimNetTests();
+    SendTests();
     ExampleFileTests();
 }

@@ -233,6 +233,7 @@ namespace ConditionEngine::Dials::Events {
                 info.text = e->strArg.c_str();
                 info.number = e->numArg;
                 info.crosshair = g_crosshair.load();
+                info.fromDial = Service::SendingDial();  // a dial's own "send": that dial does not hear it
                 std::string name = e->eventName.c_str();
                 if (auto* tasks = SKSE::GetTaskInterface()) {
                     tasks->AddTask([name = std::move(name), info = std::move(info)]() {

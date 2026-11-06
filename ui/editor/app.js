@@ -61,11 +61,12 @@
   ];
   const ACTIONS = [
     ['set', 'set the value to'], ['add', 'add'], ['multiply', 'multiply by'], ['toggle', 'switch on / off'], ['reset', 'reset'],
-    ['cycle', 'go to the next option'], ['rate', 'change the value by'], ['approach', 'move the value toward']
+    ['cycle', 'go to the next option'], ['rate', 'change the value by'], ['approach', 'move the value toward'],
+    ['send', 'send a mod event']
   ];
   const TRACK_PRESETS = ['IsPlayer || IsFollower', 'IsFollower && !IsPlayer', '!IsPlayer', 'true'];
   const CONTINUOUS = ['rate', 'approach', 'set'];
-  const DISCRETE = ['set', 'add', 'multiply', 'toggle', 'reset', 'cycle'];
+  const DISCRETE = ['set', 'add', 'multiply', 'toggle', 'reset', 'cycle', 'send'];
 
   function findDial(key) { return state.dials.find((d) => d.id.toLowerCase() === key) || null; }
   function selectedDial() { return selectedKey ? findDial(selectedKey) : null; }
@@ -818,7 +819,7 @@
       if (t !== 'aiAction') delete r.description;
       const a = actionOf(r);
       const allowed = t === 'while' ? CONTINUOUS : DISCRETE;
-      if (allowed.indexOf(a) < 0) { delete r[a]; delete r.halfLife; r[allowed[0]] = a === 'rate' || a === 'approach' ? 1 : 1; }
+      if (allowed.indexOf(a) < 0) { delete r[a]; delete r.halfLife; delete r.sendNumber; delete r.sendText; r[allowed[0]] = a === 'rate' || a === 'approach' ? 1 : 1; }
       if (t === 'while') delete r.for;
       renderRules();
       changed();
@@ -832,7 +833,24 @@
     const actSel = select2(ACTIONS.filter(([k]) => allowed.indexOf(k) >= 0).map(([k, l]) => [k, k === 'set' && trig === 'while' ? 'keep the value at' : l]), act);
     doLine.appendChild(actSel);
     const af = el('div', 'fields');
-    if (act !== 'toggle' && act !== 'reset') {
+    if (act === 'send') {
+      // The mod event: a name, and optionally a number (else the dial's value) and a text
+      const name = input(r.send, '', 'Name of the mod event');
+      name.setAttribute('list', 'event-names');
+      name.addEventListener('input', () => { r.send = name.value.trim(); changed(); });
+      const num = input(r.sendNumber, '', 'Dial value');
+      num.title = 'The number of the event (numArg). Leave empty to send the value of the dial.';
+      num.style.width = '120px';
+      num.addEventListener('input', () => { const v = numberOrText(num.value); if (v === undefined) delete r.sendNumber; else r.sendNumber = v; changed(); });
+      const txt = input(r.sendText, '', 'Text');
+      txt.title = 'The text of the event (strArg)';
+      txt.style.width = '140px';
+      txt.addEventListener('input', () => { if (txt.value) r.sendText = txt.value; else delete r.sendText; changed(); });
+      af.classList.add('wrap');
+      name.style.width = '200px';
+      const pair = (label, box) => { const s = el('span', 'pair'); s.append(el('span', 'unit', label), box); return s; };
+      af.append(name, pair('number', num), pair('text', txt));
+    } else if (act !== 'toggle' && act !== 'reset') {
       const x = exprInput(r[act] === true ? '' : r[act], act === 'cycle' ? '1, or -1 for back' : 'A number, or a value such as $hunger / 10', true);
       x.input.addEventListener('input', () => { r[act] = numberOrText(x.input.value); if (r[act] === undefined) r[act] = act === 'cycle' ? 1 : 0; changed(); });
       x.wrap.insertBefore(window.CEPicker.insertValueButton(x.input, () => catalog, () => {
@@ -854,16 +872,19 @@
     card.appendChild(doLine);
     actSel.addEventListener('change', () => {
       const old = actionOf(r);
-      const keep = r[old];
+      const keep = old === 'send' ? undefined : r[old];  // an event name is not an amount
       delete r[old];
       const a = actSel.value;
-      if (a === 'toggle' || a === 'reset') r[a] = true;
+      if (old === 'send') { delete r.sendNumber; delete r.sendText; }
+      if (a === 'send') { r.send = 'MyMod_Event'; delete r.for; }
+      else if (a === 'toggle' || a === 'reset') r[a] = true;
       else r[a] = typeof keep === 'number' || typeof keep === 'string' ? keep : (a === 'cycle' ? 1 : a === 'multiply' ? 1 : 0);
       if (a === 'approach' && !r.halfLife) r.halfLife = 30;
       if (a !== 'approach') delete r.halfLife;
       renderRules();
       changed();
     });
+    if (act === 'send') help = (help ? help + ' ' : '') + 'Scripts get the event with RegisterForModEvent. The event goes out at the next tick. This dial does not get its own event.';
     if (help) card.appendChild(el('div', 'help', help));
 
     // MORE
@@ -900,7 +921,7 @@
       l.appendChild(i);
       grid.appendChild(l);
     };
-    if (trig !== 'while') field('for', 'Undo after (seconds)', 'Never', 'number');
+    if (trig !== 'while' && act !== 'send') field('for', 'Undo after (seconds)', 'Never', 'number');
     field('cooldown', 'Wait before it runs again (seconds)', '0', 'number');
     field('chance', 'Chance (0 to 1)', '1', 'number');
     field('actor', 'Acts on', [['auto', 'the actor of the event'], ['other', 'the other actor'], ['player', 'the player'], ['crosshair', 'the crosshair target']], 'select');
@@ -1071,8 +1092,8 @@
     for (const e of entries.slice().reverse()) {
       const row = el('div', 'log-row');
       const what = el('div', 'what');
-      what.appendChild(el('b', '', '$' + e.id));
-      what.appendChild(el('span', '', fmt(e.from) + ' → ' + fmt(e.to)));
+      what.appendChild(el('b', '', e.id ? '$' + e.id : 'Dials'));
+      if (e.id && e.from !== e.to) what.appendChild(el('span', '', fmt(e.from) + ' → ' + fmt(e.to)));
       row.appendChild(what);
       row.appendChild(el('div', 'why', e.cause + (e.actor && e.actor !== 'global' && e.actor !== 'player' ? ' · ' + e.actor : '')));
       row.appendChild(el('div', 't', fmt(e.t) + ' s'));

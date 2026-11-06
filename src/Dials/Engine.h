@@ -55,7 +55,19 @@ namespace ConditionEngine::Dials {
         std::string text;
         double number = 1.0;
         ActorKey crosshair = 0;
+        std::string fromDial;  // mod events: the dial whose rule sent it (it does not hear its own events)
     };
+
+    // A rule with "send" fired: the game layer sends this SKSE mod event on its next tick
+    struct Send {
+        std::string dial;   // the dial whose rule sent it
+        std::string name;   // eventName
+        std::string text;   // strArg
+        double number = 0;  // numArg
+        ActorKey actor = 0; // sender: the actor the rule acted on
+    };
+    // Most mod events dials send between two ticks; more are dropped (and logged), so a mistake cannot flood scripts
+    constexpr std::size_t kMaxSendsPerTick = 32;
 
     // A published value changed
     struct Change {
@@ -145,6 +157,8 @@ namespace ConditionEngine::Dials {
         // ── Outputs ──────────────────────────────────────────────────────────
         std::vector<Change> TakeChanges();
         std::vector<Note> TakeNotes();
+        std::vector<Send> TakeSends();
+        std::size_t DroppedSends() const;  // sends refused since the last Tick (over kMaxSendsPerTick)
         bool HasChanges() const;
         std::vector<LogEntry> RecentLog(std::size_t max = 50) const;
         double Now() const;
@@ -230,6 +244,9 @@ namespace ConditionEngine::Dials {
         std::unordered_map<std::string, std::unordered_map<ActorKey, Cell>> orphans_;
         std::vector<Change> changes_;
         std::vector<Note> notes_;
+        std::vector<Send> sends_;
+        std::size_t sendsSinceTick_ = 0;    // sends queued since the last Tick, against kMaxSendsPerTick
+        std::size_t droppedSinceTick_ = 0;  // sends refused since the last Tick (logged once per tick)
         std::deque<LogEntry> log_;
         double now_ = 0;        // real seconds the game has run (not paused)
         double gameHours_ = 0;  // the game clock at the last tick
