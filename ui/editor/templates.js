@@ -1,9 +1,9 @@
-// Ideas to start a dial from. Each is the same JSON a dial file holds.
+// Examples to start a dial from. Each example is the same JSON that a dial file holds.
 window.DIAL_TEMPLATES = [
   {
-    id: 'alarm', title: 'Combat alarm', blurb: 'Jumps to 10 when a fight starts, then drops 1 per second once it is over.',
+    id: 'alarm', title: 'Combat alarm', blurb: 'Goes to 10 when a fight starts. After the fight, it decreases by 1 each second.',
     json: {
-      label: 'Alarm', range: [0, 10], description: 'How alarmed you still are after a fight',
+      label: 'Alarm', range: [0, 10], description: 'How alarmed you are after a fight',
       rules: [
         { label: 'A fight starts', when: 'Combat', set: 10 },
         { label: 'Calms down', while: '!Combat', rate: -1 }
@@ -12,17 +12,17 @@ window.DIAL_TEMPLATES = [
     }
   },
   {
-    id: 'hungry_resolve', title: 'Fades with hunger', blurb: 'Set to 10 in combat, then lowered by your current $hunger each second.',
+    id: 'hungry_resolve', title: 'Decreases with hunger', blurb: 'Goes to 10 in combat. Then your $hunger decreases it each second.',
     json: {
       label: 'Resolve', range: [0, 10],
       rules: [
         { when: 'Combat', set: 10 },
-        { label: 'Hunger wears it down', while: '!Combat', rate: '-$hunger / 100' }
+        { label: 'Hunger decreases it', while: '!Combat', rate: '-$hunger / 100' }
       ]
     }
   },
   {
-    id: 'performing', title: 'On / off by events', blurb: 'One mod event switches it on, another switches it off.',
+    id: 'performing', title: 'On and off with events', blurb: 'One mod event sets it to on. A different mod event sets it to off.',
     json: {
       kind: 'toggle', label: 'Performing',
       rules: [
@@ -33,33 +33,33 @@ window.DIAL_TEMPLATES = [
     }
   },
   {
-    id: 'wetness', title: 'Wetness', blurb: 'Rain soaks you, water drenches you, you dry off indoors. Followers too.',
+    id: 'wetness', title: 'Wetness', blurb: 'Rain makes you wet. Water makes you fully wet. You become dry indoors. This also applies to followers.',
     json: {
       label: 'Wetness', range: [0, 100], unit: '%', scope: 'actor', track: 'IsPlayer || IsFollower',
       rules: [
         { label: 'Rain', while: '@OutsideInRain', rate: 1.5 },
         { label: 'In the water', while: 'InWater', set: 100 },
-        { label: 'Drying', while: '!@OutsideInRain && !InWater', approach: 0, halfLife: 120 }
+        { label: 'Becomes dry', while: '!@OutsideInRain && !InWater', approach: 0, halfLife: 120 }
       ],
       thresholds: [20, 70],
       conditions: { Damp: '>= 20', Soaked: '>= 70' }
     }
   },
   {
-    id: 'adrenaline', title: 'Adrenaline', blurb: 'Hits and fights pump it up; it ebbs away out of combat.',
+    id: 'adrenaline', title: 'Adrenaline', blurb: 'Hits and fights increase it. It decreases slowly out of combat.',
     json: {
       label: 'Adrenaline', range: [0, 100],
       rules: [
-        { label: 'Got hit', on: 'Hit', add: 12, cooldown: 1 },
+        { label: 'A hit', on: 'Hit', add: 12, cooldown: 1 },
         { label: 'A fight starts', on: 'CombatStart', add: 25 },
-        { label: 'Ebbs', while: '!Combat', approach: 0, halfLife: 20 }
+        { label: 'Decreases', while: '!Combat', approach: 0, halfLife: 20 }
       ],
       thresholds: [60],
       conditions: { AdrenalineRush: '>= 60' }
     }
   },
   {
-    id: 'kills_today', title: 'Kills today', blurb: 'Counts your kills and starts again at dawn.',
+    id: 'kills_today', title: 'Kills today', blurb: 'Counts your kills. It goes back to 0 at dawn.',
     json: {
       label: 'Kills today', range: [0, 9999], integer: true,
       rules: [
@@ -70,7 +70,7 @@ window.DIAL_TEMPLATES = [
     }
   },
   {
-    id: 'hours_awake', title: 'Hours awake', blurb: 'Rises 1 per game hour, back to 0 when you sleep. Waiting counts.',
+    id: 'hours_awake', title: 'Hours awake', blurb: 'Increases by 1 each game hour. It goes back to 0 when you sleep. Time that you wait also counts.',
     json: {
       label: 'Hours awake', range: [0, 96], unit: 'h',
       rules: [
@@ -81,7 +81,7 @@ window.DIAL_TEMPLATES = [
     }
   },
   {
-    id: 'fear', title: 'Fear of you (per NPC)', blurb: 'Every NPC you hit fears you a little more; it fades over a minute.',
+    id: 'fear', title: 'Fear of you (each NPC)', blurb: 'Each NPC that you hit has more fear of you. The fear decreases in one minute.',
     json: {
       label: 'Fear of the player', range: [0, 100], scope: 'actor', track: '!IsPlayer',
       rules: [
@@ -92,18 +92,18 @@ window.DIAL_TEMPLATES = [
     }
   },
   {
-    id: 'outfit_mode', title: 'Mode switch', blurb: 'Named modes you cycle with a key; drawing a weapon picks Battle.',
+    id: 'outfit_mode', title: 'Mode switch', blurb: 'Modes with names. A key goes to the next mode. When you draw a weapon, the mode is Battle.',
     json: {
       label: 'Outfit mode', options: ['Casual', 'Formal', 'Battle'],
       rules: [
-        { label: 'F7 cycles', key: 'F7', cycle: 1 },
-        { label: 'Weapon out', when: 'WeaponDrawn', set: 2 }
+        { label: 'F7 goes to the next mode', key: 'F7', cycle: 1 },
+        { label: 'Weapon drawn', when: 'WeaponDrawn', set: 2 }
       ],
       conditions: { CasualMode: 'Casual', FormalMode: 'Formal', BattleMode: 'Battle' }
     }
   },
   {
-    id: 'burning', title: 'On fire (for a while)', blurb: 'A fire effect lands: on for 5 seconds, longer if it keeps landing.',
+    id: 'burning', title: 'On fire (for a while)', blurb: 'A fire effect hits the actor: on for 5 seconds. More fire keeps it on.',
     json: {
       kind: 'toggle', label: 'Burning', scope: 'actor', track: 'IsPlayer || IsFollower',
       rules: [
@@ -112,7 +112,7 @@ window.DIAL_TEMPLATES = [
     }
   },
   {
-    id: 'tension', title: 'Sneak tension', blurb: 'Builds while sneaking, faster in combat; relaxes when you stand up.',
+    id: 'tension', title: 'Sneak tension', blurb: 'Increases while you sneak, and faster in combat. It decreases when you stand up.',
     json: {
       label: 'Tension', range: [0, 100],
       rules: [
@@ -123,7 +123,7 @@ window.DIAL_TEMPLATES = [
     }
   },
   {
-    id: 'felt_cold', title: 'Felt cold (smoothed)', blurb: 'Follows $cold slowly, so a gust does not make you shiver.',
+    id: 'felt_cold', title: 'Felt cold (smoothed)', blurb: 'Follows $cold slowly. A short gust of wind does not make you shiver.',
     json: {
       label: 'Felt cold', range: [0, 100],
       rules: [
@@ -133,7 +133,7 @@ window.DIAL_TEMPLATES = [
     }
   },
   {
-    id: 'gift_mood', title: 'Gifts (per follower)', blurb: 'A follower you give items to warms up; it cools over game days.',
+    id: 'gift_mood', title: 'Gifts (each follower)', blurb: 'A follower likes you more when you give items. This decreases over game days.',
     json: {
       label: 'Gift mood', range: [0, 100], scope: 'actor', track: 'IsFollower && !IsPlayer',
       rules: [
@@ -144,35 +144,35 @@ window.DIAL_TEMPLATES = [
     }
   },
   {
-    id: 'manic', title: 'Manic spells (SkyrimNet)', blurb: 'About once a day each follower goes manic for half an hour; SkyrimNet knows, remembers, and can calm them down.',
+    id: 'manic', title: 'Manic spells (SkyrimNet)', blurb: 'Approximately one time each day, a follower becomes manic for half an hour. SkyrimNet knows this, keeps a memory of it, and can calm the follower.',
     json: {
       kind: 'toggle', label: 'Manic', scope: 'actor', track: 'IsFollower && !IsPlayer',
-      description: 'A manic spell: restless, talkative, impulsive',
+      description: 'A manic period: restless, talks much, acts fast',
       rules: [
-        { label: 'A spell starts (about once a day)', every: 1, clock: 'game', chance: 0.05, cooldown: 20, set: 1, for: 0.5,
-          tell: '{name} is suddenly gripped by a manic restlessness.' },
-        { label: 'Being talked down', aiAction: 'CalmDown', description: 'Take a breath and calm down after a manic spell, when someone helps you settle',
-          if: '@Manic', set: 0, tell: '{name} calms down.' }
+        { label: 'A manic period starts (approximately one time each day)', every: 1, clock: 'game', chance: 0.05, cooldown: 20, set: 1, for: 0.5,
+          tell: '{name} suddenly becomes manic and restless.' },
+        { label: 'A person calms the NPC', aiAction: 'CalmDown', description: 'Breathe slowly and become calm after a manic period, when a person helps you',
+          if: '@Manic', set: 0, tell: '{name} becomes calm.' }
       ],
       conditions: {
-        Manic: { expr: '== 1', knowledge: 'You are in a manic phase: restless, talking fast, jumping between ideas, hard to calm. You do not notice it yourself.' }
+        Manic: { expr: '== 1', knowledge: 'You are in a manic period. You are restless, you talk fast and you go from idea to idea. It is difficult to calm you. You do not know this about yourself.' }
       }
     }
   },
   {
-    id: 'annoyance', title: 'Annoyed by chatter (SkyrimNet)', blurb: 'Every line someone says to an NPC annoys them a little; it fades over an hour.',
+    id: 'annoyance', title: 'Annoyed by talk (SkyrimNet)', blurb: 'Each line that a person says to an NPC annoys the NPC a little. This decreases in one hour.',
     json: {
       label: 'Annoyance', range: [0, 100], scope: 'actor', track: '!IsPlayer',
       rules: [
-        { label: 'Someone spoke to them', skyrimnet: 'dialogue', actor: 'other', add: 4, cooldown: 5 },
+        { label: 'A person spoke to the NPC', skyrimnet: 'dialogue', actor: 'other', add: 4, cooldown: 5 },
         { while: true, rate: -20, clock: 'game' }
       ],
       thresholds: [60],
-      conditions: { Irritated: { expr: '>= 60', knowledge: 'You have heard enough talking for now and are getting short-tempered.' } }
+      conditions: { Irritated: { expr: '>= 60', knowledge: 'You do not want to hear more talk now. You become angry quickly.' } }
     }
   },
   {
-    id: 'blank', title: 'Blank', blurb: 'An empty number from 0 to 100.',
+    id: 'blank', title: 'Empty', blurb: 'A number from 0 to 100, with no rules.',
     json: { label: 'New dial', range: [0, 100], rules: [] }
   }
 ];

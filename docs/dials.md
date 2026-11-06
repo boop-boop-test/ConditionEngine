@@ -192,7 +192,7 @@ fRefreshSeconds = 1.5    ; how fresh condition_engine() answers are
 ## Opening the editor
 
 Shift+F10 opens the editor (also `ce ui` in the console, `Dials.OpenEditor()` and `ConditionEngine_OpenEditor`).
-Change the key in the editor itself (**Open with … Change** at the bottom of the sidebar: press a key, with Shift / Ctrl /
+Change the key in the editor itself (**Key to open … Change** at the bottom of the sidebar: push a key, with Shift / Ctrl /
 Alt if you like, or pick one, or none). Choosing one there saves it in `User/User.json` and applies at once; it wins over `[Editor] iHotkey`.
 
 - **With InputManager installed**, the key is the InputManager action `ConditionEngine_OpenEditor` ("Open the
