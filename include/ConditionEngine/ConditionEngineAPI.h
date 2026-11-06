@@ -439,6 +439,28 @@ CONDITIONENGINE_API CE_Result ConditionEngine_LoadDials(const uint8_t* data, uin
 /// From the host's revert callback (before a load or a new game): every dial back to its default.
 CONDITIONENGINE_API void ConditionEngine_RevertDials(void);
 
+// ── Important people ─────────────────────────────────────────────────────────
+// Groups of NPCs most players care about (docs/people.md): "court", "leaders", "guilds", "quest",
+// "followers", "spouse", "household", "essential", "custom", plus any a preset or mod adds.
+// Conditions read them as ImportantPerson() / ImportantPerson([court, spouse]). What a mod adds
+// lasts until the game closes (it is not saved); add it once, e.g. from kDataLoaded.
+
+/// Adds or extends a group: `json` is {"label", "description", "icon", "order", "members": [...],
+/// "teammates": bool, "essential": bool}, members being form strings ("0x1A6B|Skyrim.esm") or
+/// editor IDs of NPCs, actors, factions, keywords or form lists. An existing group gains the
+/// members; only the first definer's label and order count. `owner` null = the calling module.
+CONDITIONENGINE_API CE_Result ConditionEngine_DefinePeopleGroup(const char* id, const char* json, const char* owner,
+                                                                char* errorBuf, uint32_t errorBufSize);
+/// One member into a group (made when new). CE_ERR_ALREADY_EXISTS when it is in already.
+CONDITIONENGINE_API CE_Result ConditionEngine_AddImportantPerson(const char* group, const char* member, const char* owner);
+CONDITIONENGINE_API CE_Result ConditionEngine_RemoveImportantPerson(const char* group, const char* member);
+/// The first group the actor is in (display order), limited to `groups` ("court,spouse"; null or
+/// "" = any) into buf; returns the size needed, 1 (an empty string) when none. Main thread.
+CONDITIONENGINE_API uint32_t ConditionEngine_GetImportantGroup(void* actor, const char* groups, char* buf,
+                                                               uint32_t bufSize);
+/// JSON: [{"id", "label", "description", "icon", "order", "members", "teammates", "essential", "sources"}]
+CONDITIONENGINE_API uint32_t ConditionEngine_ListPeopleGroups(char* buf, uint32_t bufSize);
+
 // ── Cost counters ────────────────────────────────────────────────────────────
 
 /// JSON, any thread:

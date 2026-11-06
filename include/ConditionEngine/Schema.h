@@ -59,6 +59,9 @@ namespace ConditionEngine {
         bool required = false;
         std::string paramType;                // module-parameter compatibility: Int, Float, String, Boolean
         std::string widget;                   // Custom: editor id ("dial", "slots")
+        // Enum / EnumList whose choices change at run time (e.g. people groups from presets):
+        // the catalog asks this instead of reading `options`
+        std::function<std::vector<FieldOption>()> optionsProvider;
 
         // Fluent modifiers (return copies so they chain on builder temporaries)
         FieldSchema Describe(std::string text) const { auto c = *this; c.description = std::move(text); return c; }
@@ -67,6 +70,11 @@ namespace ConditionEngine {
         FieldSchema Range(double lo, double hi) const { auto c = *this; c.min = lo; c.max = hi; return c; }
         FieldSchema Default(nlohmann::json value) const { auto c = *this; c.defaultValue = std::move(value); return c; }
         FieldSchema Custom() const { auto c = *this; c.allowCustom = true; return c; }
+        FieldSchema OptionsFrom(std::function<std::vector<FieldOption>()> provider) const {
+            auto c = *this;
+            c.optionsProvider = std::move(provider);
+            return c;
+        }
     };
 
     // A picker group. Categories form a tree through `parent` (empty = top level);

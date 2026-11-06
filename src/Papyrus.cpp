@@ -6,6 +6,7 @@
 #include "ConditionEngine/EvaluationContext.h"
 #include "ConditionEngine/Explain.h"
 #include "ConditionEngine/Expression.h"
+#include "ConditionEngine/People.h"
 #include "ConditionEngine/Registry.h"
 #include "ConditionEngine/Value.h"
 #include "ConditionEngine/Values/PushedValues.h"
@@ -394,6 +395,74 @@ namespace ConditionEngine::Papyrus {
             return Registry::Get().GetCatalog().dump();
         }
 
+        // ── Important people (docs/people.md) ──
+        std::vector<std::string> GroupList(const RE::BSFixedString& groups) {
+            if (groups.empty()) return {};
+            return ReadStringList(nlohmann::json{{"groups", groups.c_str()}}, "groups");
+        }
+
+        // The first matching group, read on the main thread
+        template <class R, class Make>
+        Latent PeopleOnMainThread(InternalVM* vm, RE::VMStackID stackId, RE::Actor* actor, RE::BSFixedString groups,
+                                  Make make) {
+            auto* tasks = SKSE::GetTaskInterface();
+            if (!tasks) return Latent::kFailed;
+            const RE::ActorHandle handle = actor ? actor->GetHandle() : RE::ActorHandle{};
+            tasks->AddTask([vm, stackId, handle, list = GroupList(groups), make]() {
+                auto target = handle.get();
+                const auto group = target ? People::MatchGroup(target.get(), list) : std::string{};
+                vm->ReturnLatentResult<R>(stackId, make(group));
+            });
+            return Latent::kStarted;
+        }
+
+        Latent IsImportantPerson(InternalVM* vm, RE::VMStackID stackId, StaticFn*, RE::Actor* actor,
+                                 RE::BSFixedString groups) {
+            return PeopleOnMainThread<bool>(vm, stackId, actor, groups, [](const std::string& g) { return !g.empty(); });
+        }
+
+        Latent GetImportantGroup(InternalVM* vm, RE::VMStackID stackId, StaticFn*, RE::Actor* actor,
+                                 RE::BSFixedString groups) {
+            return PeopleOnMainThread<RE::BSFixedString>(vm, stackId, actor, groups,
+                                                         [](const std::string& g) { return RE::BSFixedString(g); });
+        }
+
+        std::string GroupOrCustom(const RE::BSFixedString& group) {
+            return group.empty() ? std::string(People::kUserGroup) : std::string(group.c_str());
+        }
+
+        bool AddImportantPerson(StaticFn*, RE::TESForm* form, RE::BSFixedString group) {
+            const auto member = People::MemberString(form);
+            return !member.empty() && People::AddMember(GroupOrCustom(group), member, "papyrus");
+        }
+
+        bool RemoveImportantPerson(StaticFn*, RE::TESForm* form, RE::BSFixedString group) {
+            const auto member = People::MemberString(form);
+            return !member.empty() && People::RemoveMember(GroupOrCustom(group), member);
+        }
+
+        bool RememberImportantPerson(StaticFn*, RE::TESForm* form, RE::BSFixedString group) {
+            const auto member = People::MemberString(form);
+            std::string error;
+            if (!member.empty() && People::AddUserMember(GroupOrCustom(group), member, &error)) return true;
+            if (!error.empty()) SKSE::log::info("ConditionEngine.RememberImportantPerson: {}", error);
+            return false;
+        }
+
+        bool ForgetImportantPerson(StaticFn*, RE::TESForm* form, RE::BSFixedString group) {
+            const auto member = People::MemberString(form);
+            std::string error;
+            if (!member.empty() && People::RemoveUserMember(GroupOrCustom(group), member, &error)) return true;
+            if (!error.empty()) SKSE::log::info("ConditionEngine.ForgetImportantPerson: {}", error);
+            return false;
+        }
+
+        RE::BSFixedString GetPeopleGroups(StaticFn*) {
+            nlohmann::json list = nlohmann::json::array();
+            for (const auto& g : People::ListGroups()) list.push_back(g.ToJson());
+            return list.dump();
+        }
+
         bool RegisterFunctions(VM* vm) {
             RegisterLatent<bool>(vm, "Evaluate", Evaluate);
             RegisterLatent<bool>(vm, "EvaluateNamed", EvaluateNamed);
@@ -418,6 +487,13 @@ namespace ConditionEngine::Papyrus {
             vm->RegisterFunction("RegisterNamedValue", kScriptName, RegisterNamedValue);
             vm->RegisterFunction("WatchValue", kScriptName, WatchValue);
             vm->RegisterFunction("GetPollInterval", kScriptName, GetPollInterval);
+            RegisterLatent<bool>(vm, "IsImportantPerson", IsImportantPerson);
+            RegisterLatent<RE::BSFixedString>(vm, "GetImportantGroup", GetImportantGroup);
+            vm->RegisterFunction("AddImportantPerson", kScriptName, AddImportantPerson);
+            vm->RegisterFunction("RemoveImportantPerson", kScriptName, RemoveImportantPerson);
+            vm->RegisterFunction("RememberImportantPerson", kScriptName, RememberImportantPerson);
+            vm->RegisterFunction("ForgetImportantPerson", kScriptName, ForgetImportantPerson);
+            vm->RegisterFunction("GetPeopleGroups", kScriptName, GetPeopleGroups, true);
             return true;
         }
     }

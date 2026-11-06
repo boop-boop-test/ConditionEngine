@@ -140,9 +140,10 @@ namespace ConditionEngine {
         if (!field.formTypes.empty()) j["formTypes"] = field.formTypes;
         if (!field.widget.empty()) j["widget"] = field.widget;
         if (field.allowCustom) j["allowCustom"] = true;
-        if (!field.options.empty()) {
+        const auto choices = field.optionsProvider ? field.optionsProvider() : field.options;
+        if (!choices.empty()) {
             json options = json::array();
-            for (const auto& o : field.options) {
+            for (const auto& o : choices) {
                 json opt{{"value", o.value}, {"label", o.label.empty() ? o.value : o.label}};
                 if (!o.description.empty()) opt["description"] = o.description;
                 options.push_back(std::move(opt));

@@ -104,6 +104,7 @@ set(CONDITION_ENGINE_HEADERS
     include/ConditionEngine/Conditions/TimeConditions.h
     include/ConditionEngine/Conditions/WeatherConditions.h
     include/ConditionEngine/Conditions/WorldConditions.h
+    include/ConditionEngine/People.h
     include/ConditionEngine/Settings.h
     include/ConditionEngine/Stats.h
     include/ConditionEngine/Value.h
@@ -125,6 +126,7 @@ set(CONDITION_ENGINE_SOURCES
     src/Expression.cpp
     src/FirstMatchList.cpp
     src/Forms.cpp
+    src/People.cpp
     src/Presets.cpp
     src/Registry.cpp
     src/Schema.cpp
@@ -166,7 +168,8 @@ set(CONDITION_ENGINE_SOURCES
 # (generated/ConditionEngine/BuiltinPresets.inc, read by src/Presets.cpp), so they ship
 # with every copy of the DLL, bundled ones included. Editing a file re-runs configure.
 ###############################################################################
-set(CONDITIONENGINE_BUILTIN_PRESETS presets/ConditionEngine_Survival.json presets/ConditionEngine_Weather.json)
+set(CONDITIONENGINE_BUILTIN_PRESETS presets/ConditionEngine_People.json presets/ConditionEngine_Survival.json
+    presets/ConditionEngine_Weather.json)
 set(CONDITIONENGINE_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
 set(_ce_preset_arrays "")
 set(_ce_preset_entries "")
@@ -265,7 +268,7 @@ source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES
 ###############################################################################
 option(CONDITIONENGINE_BUILD_TESTS "Build ConditionEngine unit tests" ${PROJECT_IS_TOP_LEVEL})
 if(PROJECT_IS_TOP_LEVEL AND CONDITIONENGINE_BUILD_TESTS)
-    add_executable(condition-engine-tests tests/ExpressionTests.cpp tests/ValueTests.cpp tests/WeatherTests.cpp tests/GearTests.cpp
+    add_executable(condition-engine-tests tests/ExpressionTests.cpp tests/ValueTests.cpp tests/WeatherTests.cpp tests/GearTests.cpp tests/PeopleTests.cpp
         tests/DialsTests.cpp tests/Benchmark.cpp src/Dials/Definition.cpp src/Dials/Engine.cpp ${CONDITION_ENGINE_SOURCES})
     target_compile_definitions(condition-engine-tests PRIVATE DIALS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
     target_compile_definitions(condition-engine-tests PRIVATE CONDITIONENGINE_STATIC)

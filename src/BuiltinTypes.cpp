@@ -2,6 +2,7 @@
 // Each factory accepts the legacy field names and type aliases that hosts have written over time.
 
 #include "ConditionEngine/AllConditions.h"
+#include "ConditionEngine/People.h"
 #include "ConditionEngine/Registry.h"
 
 namespace ConditionEngine {
@@ -637,6 +638,7 @@ namespace ConditionEngine {
         RegisterActorConditionTypes(r);
         RegisterGearConditionTypes(r);
         RegisterWorldConditionTypes(r);
+        People::RegisterTypes(r);
 
         // Cost classes (TypeInfo::cost); unlisted types keep 3. Composites (Logical, Rule,
         // Compare) compute theirs from their parts.

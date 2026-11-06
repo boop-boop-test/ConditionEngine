@@ -95,3 +95,30 @@ Int      Function WatchValue(Actor akActor, String asNameOrExpr, String asEventN
 ; indented text: each part's state ([T] [F] [P]ending [U]navailable [-] skipped), the numbers
 ; involved and the reasons. Latent. Print it with Debug.Trace or a message box.
 String   Function Explain(Actor akActor, String asExpression) Global Native
+
+;
+; Important people - groups of NPCs most players care about (docs/people.md):
+;   court      Jarls, stewards, housecarls, court wizards     leaders    Emperor, Ulfric, Tullius, Elisif...
+;   guilds     Companions, College, Thieves Guild, DB, Bards  quest      Greybeards, Blades, DLC main cast
+;   followers  your current followers (any mod's)             spouse     the person you married
+;   household  your housecarls, stewards, adopted children    essential  anyone the game keeps alive now
+;   custom     people the player added                        ...plus groups presets and mods add
+; asGroups: "" = any group, else group ids separated by commas ("court, spouse").
+; The player is never an important person. Same as Evaluate(akActor, "ImportantPerson([court, spouse])").
+;
+; IsImportantPerson / GetImportantGroup are latent (one frame). GetImportantGroup returns the
+; first group the actor is in, "" when none.
+Bool     Function IsImportantPerson(Actor akActor, String asGroups = "") Global Native
+String   Function GetImportantGroup(Actor akActor, String asGroups = "") Global Native
+
+; akPerson: an Actor (stored as its base NPC), an ActorBase, a Faction, a Keyword or a FormList.
+; Add / Remove last until the game closes (not saved) - for a mod's own cast, add them from
+; OnInit and OnPlayerLoadGame. Remember / Forget change the player's own list (User/People.json),
+; kept across games - for a "mark as important" option in a menu. A new group name makes a group.
+Bool     Function AddImportantPerson(Form akPerson, String asGroup = "custom") Global Native
+Bool     Function RemoveImportantPerson(Form akPerson, String asGroup = "custom") Global Native
+Bool     Function RememberImportantPerson(Form akPerson, String asGroup = "custom") Global Native
+Bool     Function ForgetImportantPerson(Form akPerson, String asGroup = "custom") Global Native
+
+; JSON: [{"id", "label", "description", "icon", "order", "members", "teammates", "essential", "sources"}]
+String   Function GetPeopleGroups() Global Native

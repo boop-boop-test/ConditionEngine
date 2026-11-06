@@ -72,6 +72,7 @@ void RunValueTests(void (*check)(bool ok, const std::string& what));    // Value
 void RunWeatherTests(void (*check)(bool ok, const std::string& what));  // WeatherTests.cpp
 void RunGearTests(void (*check)(bool ok, const std::string& what));     // GearTests.cpp
 void RunDialsTests(void (*check)(bool ok, const std::string& what));    // DialsTests.cpp
+void RunPeopleTests(void (*check)(bool ok, const std::string& what));   // PeopleTests.cpp
 int RunBenchmark();                                                    // Benchmark.cpp
 
 int main(int argc, char** argv) {
@@ -331,6 +332,7 @@ int main(int argc, char** argv) {
     RunValueTests(&Check);
     RunWeatherTests(&Check);  // after the value tests, which load the built-in presets
     RunGearTests(&Check);
+    RunPeopleTests(&Check);  // after the value tests, which load the built-in presets
     RunDialsTests(&Check);
 
     std::printf("%d/%d checks passed\n", g_checks - g_failures, g_checks);

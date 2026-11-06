@@ -15,6 +15,7 @@ overview; `include/ConditionEngine/ConditionEngineAPI.h` and `ConditionEngine.ps
 | [Survival needs](survival.md) | The built-in `$hunger`, `$fatigue`, `$cold`, `$warmth`, `$coverage`, `$dirt`, `$blood`: which mod answers, the shared scale, adding a source |
 | [Dials](dials.md) | Values that rules drive: events, conditions, rates, timers, keys; per actor; saved; the editor |
 | [SkyrimNet](skyrimnet.md) | `get_dials()` and `condition_engine()` in prompts; SkyrimNet events, memories, world knowledge and AI actions from dials |
+| [Important people](people.md) | `ImportantPerson()`: Jarls and courts, leaders, guilds, quest people, your followers, spouse and household; adding people from a preset, Papyrus, the C API or the console |
 | [Weather](weather.md) | The built-in weather values and conditions: how any weather mod's weathers are read, tested mods, correcting a weather |
 
 All examples use the C API, which works from any SKSE plugin whatever its compiler, CRT or JSON library. A host that

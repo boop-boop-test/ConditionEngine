@@ -1,6 +1,7 @@
 #include "ConditionEngine/Presets.h"
 #include "ConditionEngine/Availability.h"
 #include "ConditionEngine/Expression.h"
+#include "ConditionEngine/People.h"
 #include "ConditionEngine/Registry.h"
 #include "ConditionEngine/Weather/WeatherProfiles.h"
 
@@ -53,10 +54,12 @@ namespace ConditionEngine {
         const bool hasValues = root.is_object() && root.contains("values") && root["values"].is_object();
         const bool hasCategories = root.is_object() && root.contains("categories") && root["categories"].is_array();
         const bool hasWeathers = root.is_object() && root.contains("weathers");
+        const bool hasPeople = root.is_object() && root.contains("people");
         const bool hasDials = root.is_object() && root.contains("dials");  // read by the dials (src/Dials/Service.cpp)
-        if (!hasConditions && !hasValues && !hasCategories && !hasWeathers) {
+        if (!hasConditions && !hasValues && !hasCategories && !hasWeathers && !hasPeople) {
             if (hasDials) return 0;
-            SKSE::log::warn("ConditionEngine: preset '{}' has no \"conditions\", \"values\", \"categories\" or \"weathers\"",
+            SKSE::log::warn("ConditionEngine: preset '{}' has no \"conditions\", \"values\", \"categories\", "
+                            "\"weathers\" or \"people\"",
                             source);
             return 0;
         }
@@ -93,6 +96,13 @@ namespace ConditionEngine {
         if (hasWeathers) {
             std::vector<std::string> warnings;
             count += Weather::AddOverrides(root["weathers"], source, &warnings);
+            for (const auto& w : warnings) SKSE::log::warn("ConditionEngine: preset '{}': {}", source, w);
+        }
+
+        // Important people groups (docs/people.md), merged across files
+        if (hasPeople) {
+            std::vector<std::string> warnings;
+            count += People::AddFromJson(root["people"], source, &warnings);
             for (const auto& w : warnings) SKSE::log::warn("ConditionEngine: preset '{}': {}", source, w);
         }
 

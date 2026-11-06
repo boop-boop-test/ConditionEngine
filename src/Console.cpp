@@ -7,6 +7,7 @@
 #include "ConditionEngine/Explain.h"
 #include "ConditionEngine/Expression.h"
 #include "ConditionEngine/Forms.h"
+#include "ConditionEngine/People.h"
 #include "ConditionEngine/Registry.h"
 #include "ConditionEngine/Stats.h"
 #include "ConditionEngine/Value.h"
@@ -39,6 +40,8 @@ namespace ConditionEngine::Console {
             "ce warmth                       what the actor's worn armor adds to warmth and coverage\n"
             "ce dials [help]                 dials: list, set, signal, log, what SkyrimNet reads\n"
             "ce ui [name]                    open the editor (dials, conditions, values)\n"
+            "ce people [add|remove [group]]  important people: the groups and which the actor is in;\n"
+            "                                add / remove the selected actor (group: custom)\n"
             "Quote expressions with commas: ce eval \"Time(20, 6) && $hunger > 50\"";
 
         std::string Lower(std::string s) {
@@ -297,6 +300,50 @@ namespace ConditionEngine::Console {
             }
         }
 
+        void PeopleCommand(std::string_view rest) {
+            const auto verb = Lower(NextWord(rest));
+            auto* actor = DefaultActor();
+            if (verb == "add" || verb == "remove" || verb == "rm") {
+                auto* selected = SelectedActor();
+                if (!selected) {
+                    Print("ce: select an actor first (click them with the console open)");
+                    return;
+                }
+                const auto member = People::MemberString(selected);
+                if (member.empty()) {
+                    Print("ce: " + ActorText(selected) + " was made in game and cannot be kept in the list");
+                    return;
+                }
+                auto group = NextWord(rest);
+                if (group.empty()) group = People::kUserGroup;
+                std::string error;
+                const bool add = verb == "add";
+                const bool ok = add ? People::AddUserMember(group, member, &error)
+                                    : People::RemoveUserMember(group, member, &error);
+                if (ok) {
+                    Print(std::format("ce: {} {} {} '{}' ({})", add ? "added" : "removed", ActorText(selected),
+                                      add ? "to" : "from", group, member));
+                } else {
+                    Print("ce: " + error);
+                }
+                return;
+            }
+            if (!verb.empty() && verb != "list" && verb != "ls") {
+                Print("ce: ce people, ce people add [group], ce people remove [group]");
+                return;
+            }
+            const auto in = People::GroupsOf(actor, true);
+            Print("ce: " + ActorText(actor) + (in.empty() ? " is not an important person" : " is in the starred groups"));
+            for (const auto& g : People::ListGroups()) {
+                const bool member = std::find(in.begin(), in.end(), g.id) != in.end();
+                std::string extra;
+                if (g.teammates) extra += ", every follower";
+                if (g.essential) extra += ", every essential actor";
+                Print(std::format("  {} {:<10} {} ({} members{})", member ? "*" : " ", g.id, g.label, g.members.size(),
+                                  extra));
+            }
+        }
+
         void Run(const std::string& line) {
             std::string_view rest(line);
             NextWord(rest);  // the command itself
@@ -324,6 +371,8 @@ namespace ConditionEngine::Console {
                 WarmthCommand(DefaultActor());
             } else if (sub == "dials" || sub == "dial" || sub == "d") {
                 Dials::Console::Run(rest);
+            } else if (sub == "people" || sub == "important" || sub == "p") {
+                PeopleCommand(rest);
             } else if (sub == "ui" || sub == "editor") {
                 Editor::Open(NextWord(rest));
             } else {

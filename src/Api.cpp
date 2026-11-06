@@ -7,6 +7,7 @@
 #include "ConditionEngine/EvaluationContext.h"
 #include "ConditionEngine/Explain.h"
 #include "ConditionEngine/Expression.h"
+#include "ConditionEngine/People.h"
 #include "ConditionEngine/Registry.h"
 #include "ConditionEngine/Stats.h"
 #include "ConditionEngine/Value.h"
@@ -870,6 +871,57 @@ CONDITIONENGINE_API CE_Result ConditionEngine_RegisterValueType(const char* sche
             return FromHostStatus(status, out, reason);
         },
         dependencies, errorBuf, errorBufSize, ModuleNameAt(_ReturnAddress()));
+}
+
+// ── Important people ─────────────────────────────────────────────────────────
+
+CONDITIONENGINE_API CE_Result ConditionEngine_DefinePeopleGroup(const char* id, const char* definition, const char* owner,
+                                                                char* errorBuf, uint32_t errorBufSize) {
+    if (!id || !*id) return CE_ERR_INVALID_ARG;
+    json j = json::object();
+    if (definition && *definition) {
+        try {
+            j = json::parse(definition, nullptr, true, /*ignore_comments=*/true);
+        } catch (const std::exception& e) {
+            WriteString(std::string("invalid JSON: ") + e.what(), errorBuf, errorBufSize);
+            return CE_ERR_PARSE;
+        }
+    }
+    if (!j.is_object() && !j.is_array()) {
+        WriteString("a people group is a JSON object or a list of members", errorBuf, errorBufSize);
+        return CE_ERR_INVALID_ARG;
+    }
+    std::vector<std::string> warnings;
+    const std::string who = owner && *owner ? owner : ModuleNameAt(_ReturnAddress());
+    People::AddFromJson(json{{id, j}}, who, &warnings);
+    std::string text;
+    for (const auto& w : warnings) text += (text.empty() ? "" : "; ") + w;
+    WriteString(text, errorBuf, errorBufSize);
+    return warnings.empty() ? CE_OK : CE_ERR_INVALID_ARG;
+}
+
+CONDITIONENGINE_API CE_Result ConditionEngine_AddImportantPerson(const char* group, const char* member, const char* owner) {
+    if (!member || !*member) return CE_ERR_INVALID_ARG;
+    const std::string who = owner && *owner ? owner : ModuleNameAt(_ReturnAddress());
+    return People::AddMember(group ? group : "", member, who) ? CE_OK : CE_ERR_ALREADY_EXISTS;
+}
+
+CONDITIONENGINE_API CE_Result ConditionEngine_RemoveImportantPerson(const char* group, const char* member) {
+    if (!group || !member) return CE_ERR_INVALID_ARG;
+    return People::RemoveMember(group, member) ? CE_OK : CE_ERR_NOT_FOUND;
+}
+
+CONDITIONENGINE_API uint32_t ConditionEngine_GetImportantGroup(void* actor, const char* groups, char* buf,
+                                                               uint32_t bufSize) {
+    std::vector<std::string> filter;
+    if (groups && *groups) filter = ReadStringList(json{{"groups", groups}}, "groups");
+    return WriteString(People::MatchGroup(static_cast<RE::Actor*>(actor), filter), buf, bufSize);
+}
+
+CONDITIONENGINE_API uint32_t ConditionEngine_ListPeopleGroups(char* buf, uint32_t bufSize) {
+    json list = json::array();
+    for (const auto& g : People::ListGroups()) list.push_back(g.ToJson());
+    return WriteString(list.dump(), buf, bufSize);
 }
 
 // ── Providers ────────────────────────────────────────────────────────────────

@@ -875,7 +875,8 @@ void RunValueTests(CheckFn check) {
     // ── Built-in survival preset (presets/ConditionEngine_Survival.json) ─────
     {
         const auto loaded = LoadBuiltinPresets();
-        Check(loaded == 97, "built-in presets: survival 33 values and 20 conditions, weather 14 values and 30 conditions, got " +
+        Check(loaded == 135, "built-in presets: survival 33 values and 20 conditions, weather 14 values and 30 conditions, "
+                             "people 38 members, got " +
                                 std::to_string(loaded));
         const char* values[] = {"hunger", "fatigue", "cold", "hunger_stage", "fatigue_stage", "cold_stage",
                                 "frostfall_cold", "sunhelm_hunger", "sunhelm_fatigue", "sunhelm_cold",

@@ -1766,7 +1766,8 @@
     const mockCatalog = () => ({
       categories: [
         { id: 'actor', label: 'Actor', icon: '🧍' }, { id: 'world', label: 'World', icon: '🌍' }, { id: 'weather', label: 'Weather', icon: '🌧' },
-        { id: 'survival', label: 'Survival', icon: '🍖' }, { id: 'dials', label: 'Dials', icon: '◉' }, { id: 'mine', label: 'Yours' }
+        { id: 'people', label: 'Important People', icon: '👑' }, { id: 'survival', label: 'Survival', icon: '🍖' },
+        { id: 'dials', label: 'Dials', icon: '◉' }, { id: 'mine', label: 'Yours' }
       ],
       types: [
         { name: 'Combat', label: 'In combat', category: 'actor', description: 'The actor is in combat.', fields: [] },
@@ -1785,6 +1786,13 @@
         { name: 'ActorValue', label: 'Actor value', category: 'actor', value: {}, positional: ['actorValue'],
           fields: [{ key: 'actorValue', label: 'Actor value', type: 'enum', required: true, allowCustom: true, options: ['Health', 'Magicka', 'Stamina'].map((v) => ({ value: v, label: v })) },
             { key: 'usePercentage', label: 'As a percentage', type: 'bool', default: false }] },
+        { name: 'ImportantPerson', label: 'Important Person', category: 'people', icon: '👑', positional: ['groups'],
+          description: 'Actor is one of the important people: in any of the selected groups (none selected = any group)',
+          fields: [{ key: 'groups', label: 'Groups', type: 'enumList', allowCustom: true, description: 'None selected = any group',
+            options: [['court', 'Jarls & their courts'], ['leaders', 'Leaders & royalty'], ['guilds', 'Guild members'], ['quest', 'Main & DLC quest people'],
+              ['followers', 'Your followers'], ['spouse', 'Your spouse'], ['household', 'Your housecarls & family'], ['essential', 'Essential characters'],
+              ['custom', 'Added by you']].map(([value, label]) => ({ value, label })) },
+            { key: 'includePlayer', label: 'Count the player too', type: 'bool', default: false }] },
         { name: 'Logical', label: 'And / or', hidden: true, offer: 'nowhere', fields: [] }
       ],
       namedConditions: [

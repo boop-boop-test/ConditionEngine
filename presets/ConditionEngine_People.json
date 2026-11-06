@@ -1,0 +1,102 @@
+{
+    // Important people, built into ConditionEngine.dll (docs/people.md).
+    //
+    // ImportantPerson() is true for an actor in any of these groups, ImportantPerson([court, spouse]) for
+    // the ones named. Members are NPCs, placed actors, factions, keywords or form lists. A preset that names
+    // a group adds members to it (and can make new groups); User/People.json holds the player's own list.
+    // Form IDs read from Skyrim.esm, Dawnguard.esm, HearthFires.esm and Dragonborn.esm; members from a DLC
+    // that isn't installed are skipped.
+    "people": {
+        "court": {
+            "label": "Jarls & their courts", "order": 10, "icon": "🏰",
+            "description": "Jarls, stewards, housecarls and court wizards of every hold.",
+            "members": [
+                "0x50920|Skyrim.esm",   // JobJarlFaction
+                "0x50922|Skyrim.esm",   // JobStewardFaction
+                "0x5091F|Skyrim.esm",   // JobHousecarlFaction
+                "0x5091E|Skyrim.esm"    // JobCourtWizardFaction
+            ]
+        },
+        "leaders": {
+            "label": "Leaders & royalty", "order": 20, "icon": "👑",
+            "description": "The Emperor, the civil war's leaders, the Thalmor ambassador, Maven Black-Briar, the heads of Dawnguard and the Volkihar.",
+            "members": [
+                "0x1D4B9|Skyrim.esm",   // Titus Mede II
+                "0x1414D|Skyrim.esm",   // Ulfric Stormcloak
+                "0x1327E|Skyrim.esm",   // General Tullius
+                "0x1326A|Skyrim.esm",   // Elisif the Fair
+                "0x14128|Skyrim.esm",   // Galmar Stone-Fist
+                "0x132A1|Skyrim.esm",   // Legate Rikke
+                "0x13269|Skyrim.esm",   // Elenwen
+                "0x1336A|Skyrim.esm",   // Maven Black-Briar
+                "0x336A|Dawnguard.esm", // Isran
+                "0x3BA7|Dawnguard.esm"  // Harkon
+            ]
+        },
+        "guilds": {
+            "label": "Guild members", "order": 30, "icon": "🛡️",
+            "description": "The Companions, the College of Winterhold, the Thieves Guild, the Dark Brotherhood, the Bards College and the Dawnguard.",
+            "members": [
+                "0x48362|Skyrim.esm",    // CompanionsFaction
+                "0x1F259|Skyrim.esm",    // CollegeofWinterholdFaction
+                "0x29DA9|Skyrim.esm",    // ThievesGuildFaction
+                "0x1BDB3|Skyrim.esm",    // DarkBrotherhoodFaction
+                "0xC13C7|Skyrim.esm",    // SolitudeBardsCollegeFaction
+                "0x14217|Dawnguard.esm"  // DLC1DawnguardFaction
+            ]
+        },
+        "quest": {
+            "label": "Main & DLC quest people", "order": 40, "icon": "📜",
+            "description": "The Greybeards, the Blades, Paarthurnax, and the main characters of Dawnguard and Dragonborn.",
+            "members": [
+                "0x2C6C8|Skyrim.esm",     // GreybeardFaction
+                "0x72834|Skyrim.esm",     // BladesFaction
+                "0x2C6C7|Skyrim.esm",     // Arngeir
+                "0x13478|Skyrim.esm",     // Delphine
+                "0x13358|Skyrim.esm",     // Esbern
+                "0x3C57C|Skyrim.esm",     // Paarthurnax
+                "0x2B6C|Dawnguard.esm",   // Serana
+                "0x3B8B|Dawnguard.esm",   // Valerica
+                "0x17934|Dragonborn.esm", // Frea
+                "0x17935|Dragonborn.esm", // Storn
+                "0x1773A|Dragonborn.esm", // Neloth
+                "0x17F7D|Dragonborn.esm"  // Miraak
+            ]
+        },
+        "followers": {
+            "label": "Your followers", "order": 50, "icon": "🤝",
+            "description": "Everyone following you now: vanilla followers and any mod's (player teammates).",
+            "teammates": true,
+            "members": [
+                "0x5C84E|Skyrim.esm"      // CurrentFollowerFaction
+            ]
+        },
+        "spouse": {
+            "label": "Your spouse", "order": 55, "icon": "💍",
+            "description": "The person you married.",
+            "members": [
+                "0xC6472|Skyrim.esm"      // PlayerMarriedFaction
+            ]
+        },
+        "household": {
+            "label": "Your housecarls & family", "order": 60, "icon": "🏡",
+            "description": "Your housecarls, Hearthfire stewards and adopted children.",
+            "members": [
+                "0xA2C8D|Skyrim.esm",      // PlayerHousecarlFaction
+                "0x8460|HearthFires.esm",  // BYOHHousecarlFaction
+                "0x308E|HearthFires.esm",  // BYOHHouseStewardFaction
+                "0x42B0|HearthFires.esm"   // BYOHRelationshipAdoptionFaction
+            ]
+        },
+        "essential": {
+            "label": "Essential characters", "order": 70, "icon": "⭐",
+            "description": "Anyone the game keeps from dying right now: quest characters of vanilla and of mods.",
+            "essential": true
+        },
+        "custom": {
+            "label": "Added by you", "order": 90, "icon": "✍️",
+            "description": "People you added: ce people add (the selected actor), or by editing User/People.json.",
+            "members": []
+        }
+    }
+}

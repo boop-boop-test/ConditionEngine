@@ -12,6 +12,7 @@
 #include "Dials/Settings.h"
 #include "SkyrimNet/Bridge.h"
 
+#include "ConditionEngine/People.h"
 #include "ConditionEngine/Presets.h"
 #include "ConditionEngine/Availability.h"
 #include "ConditionEngine/Conditions/PapyrusCallCondition.h"
@@ -50,9 +51,12 @@ namespace {
                 ConditionEngine::Weather::PrimeEditorIds();  // reads weather editor IDs on a worker
 
                 const auto builtin = ConditionEngine::LoadBuiltinPresets();
-                SKSE::log::info("Loaded {} built-in named conditions and values (survival, weather)", builtin);
+                SKSE::log::info("Loaded {} built-in named conditions, values and people (survival, weather, people)", builtin);
                 auto count = ConditionEngine::LoadPresetDirectory(ConditionEngine::GetDefaultPresetDirectory());
                 SKSE::log::info("Loaded {} named conditions and values from presets", count);
+                const auto people = ConditionEngine::People::LoadUserFile();
+                SKSE::log::info("Important people: {} groups, {} of your own additions",
+                                ConditionEngine::People::ListGroups().size(), people);
 
                 auto& watcher = ConditionEngine::Watcher::Get();
                 watcher.SetPollInterval(settings.pollInterval);
