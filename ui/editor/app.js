@@ -336,6 +336,7 @@
     $('f-scope').value = scope === 'global' ? 'global' : scope === 'player' || !track || track === 'IsPlayer' ? 'player' : 'actor';
     renderTrack(track);
     $('f-persist').checked = j.persist !== false;
+    $('f-oar').checked = j.oar === true;
     $('f-thresholds').value = (j.thresholds || []).join(', ');
     $('f-precision').value = j.precision !== undefined ? j.precision : '';
     $('f-provides').value = [].concat(j.provides || []).join(', ');
@@ -495,6 +496,7 @@
       renderTrack(draft.track, custom);
     }, 'change');
     on('f-persist', (e) => setKey('persist', e.checked ? undefined : false), 'change');
+    on('f-oar', (e) => setKey('oar', e.checked ? true : undefined), 'change');
     on('f-thresholds', (e) => {
       const t = list(e.value).map(Number).filter((n) => isFinite(n));
       setKey('thresholds', t.length ? t : undefined);
@@ -1171,6 +1173,11 @@
     rows.push(['Expression', kind === 'toggle' ? '$' + id + ' == 1' : '$' + id + ' >= 50']);
     for (const name of Object.keys(j.conditions || {})) rows.push(['Expression: @' + name, '@' + name]);
     rows.push(['Papyrus', 'Dials.GetValue("' + id + '", akActor)']);
+    if (j.oar === true) {
+      const value = kind === 'toggle' ? 1 : kind === 'choice' && opts.length ? opts[opts.length - 1][0] : 50;
+      const comparison = kind === 'number' ? '>=' : '==';
+      rows.push(['OAR config.json', JSON.stringify({ condition: 'ConditionEngineDial', requiredPlugin: 'ConditionEngine', Dial: id, Comparison: comparison, Value: { value } })]);
+    }
     return rows;
   }
 

@@ -5,6 +5,8 @@
 
 #include "OAR/OpenAnimationReplacerAPI-Conditions.h"
 
+#include "Dials/OarValues.h"
+
 #include "ConditionEngine/Availability.h"
 #include "ConditionEngine/Conditions/RuleReferenceCondition.h"
 #include "ConditionEngine/EvaluationContext.h"
@@ -352,6 +354,55 @@ namespace ConditionEngine::OarConditions {
             ::Conditions::ITextConditionComponent* textComponent_ = nullptr;
         };
 
+        // A dial that says "oar": true, compared with a number. Reads the copy of the values the
+        // dials service keeps for OAR (Dials/OarValues.h): no watch, no main thread, no first-read lag.
+        class ConditionEngineDialCondition : public ::Conditions::CustomCondition {
+        public:
+            inline static constexpr std::string_view CONDITION_NAME = "ConditionEngineDial";
+
+            ConditionEngineDialCondition() {
+                dialComponent_ = static_cast<::Conditions::ITextConditionComponent*>(AddBaseComponent(
+                    ::Conditions::ConditionComponentType::kText, "Dial",
+                    "The dial's name, e.g. MyMod_Alarm. The dial must say \"oar\": true (in the editor: More settings, "
+                    "Animation mods (OAR) can read it)."));
+                comparisonComponent_ = static_cast<::Conditions::IComparisonConditionComponent*>(AddBaseComponent(
+                    ::Conditions::ConditionComponentType::kComparison, "Comparison"));
+                valueComponent_ = static_cast<::Conditions::INumericConditionComponent*>(AddBaseComponent(
+                    ::Conditions::ConditionComponentType::kNumeric, "Value",
+                    "The number to compare the dial with. Toggles are 0 (off) and 1 (on); choice dials are the "
+                    "option's number (0, 1, ...)."));
+            }
+
+            RE::BSString GetName() const override { return CONDITION_NAME.data(); }
+            RE::BSString GetDescription() const override {
+                return "Compares a ConditionEngine dial's value for this actor (or its one value, for a global dial) "
+                       "with a number. Only dials that say \"oar\": true can be read; others, and unknown names, "
+                       "read false.";
+            }
+            REL::Version GetRequiredVersion() const override {
+                return SKSE::PluginDeclaration::GetSingleton()->GetVersion();
+            }
+            RE::BSString GetCurrent(RE::TESObjectREFR* refr) const override {
+                const auto reading = Dials::OarValues::Get().Read(dialComponent_->GetTextValue().c_str(),
+                                                                  refr ? refr->GetFormID() : 0, true);
+                return ToBSString(reading.text);
+            }
+
+        protected:
+            bool EvaluateImpl(RE::TESObjectREFR* refr, RE::hkbClipGenerator*, void*) const override {
+                if (!refr) return false;
+                const auto reading = Dials::OarValues::Get().Read(dialComponent_->GetTextValue().c_str(), refr->GetFormID());
+                if (reading.status != Dials::OarValues::Status::Ok) return false;
+                return comparisonComponent_->GetComparisonResult(static_cast<float>(reading.value),
+                                                                 valueComponent_->GetNumericValue(refr));
+            }
+
+        private:
+            ::Conditions::ITextConditionComponent* dialComponent_ = nullptr;
+            ::Conditions::IComparisonConditionComponent* comparisonComponent_ = nullptr;
+            ::Conditions::INumericConditionComponent* valueComponent_ = nullptr;
+        };
+
         const char* ResultName(OAR_API::Conditions::APIResult result) {
             switch (result) {
                 case OAR_API::Conditions::APIResult::OK: return "registered";
@@ -374,8 +425,10 @@ namespace ConditionEngine::OarConditions {
         }
         const auto named = OAR_API::Conditions::AddCustomCondition<ConditionEngineCondition>();
         const auto expression = OAR_API::Conditions::AddCustomCondition<ConditionEngineExpressionCondition>();
-        SKSE::log::info("OAR conditions: {} {}, {} {}", ConditionEngineCondition::CONDITION_NAME, ResultName(named),
-                        ConditionEngineExpressionCondition::CONDITION_NAME, ResultName(expression));
+        const auto dial = OAR_API::Conditions::AddCustomCondition<ConditionEngineDialCondition>();
+        SKSE::log::info("OAR conditions: {} {}, {} {}, {} {}", ConditionEngineCondition::CONDITION_NAME, ResultName(named),
+                        ConditionEngineExpressionCondition::CONDITION_NAME, ResultName(expression),
+                        ConditionEngineDialCondition::CONDITION_NAME, ResultName(dial));
     }
 
     void OnGameLoad() {

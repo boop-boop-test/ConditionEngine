@@ -44,6 +44,7 @@ with a digit, and is also its ConditionEngine value: `$MyMod_Alarm`. Prefix name
 | `scope` | `global` | `global`: one value for the whole game. `player`: the player's own value only. `actor`: each actor in `track` has their own |
 | `track` | | `actor` dials: a condition saying which actors have the dial (`IsPlayer \|\| IsFollower`, `!IsPlayer` for NPCs, `true` for everyone). An actor dial without one is the player's only |
 | `persist` | `true` | Save the values with the game |
+| `oar` | `false` | Open Animation Replacer submods may read the dial (`ConditionEngineDial`, [oar-conditions.md](oar-conditions.md#a-dial)) |
 | `thresholds` | | Numbers; a rate that crosses one sends `Dials_Changed` |
 | `precision` | range / 200 | The smallest change worth publishing to ConditionEngine |
 | `provides`, `priority` | | Feed combined ConditionEngine values, e.g. `"provides": ["hunger"]` makes the dial a `$hunger` source |

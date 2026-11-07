@@ -155,10 +155,11 @@ Quote an expression that has commas: `ce eval "Time(20, 6) && $hunger > 50"`.
 
 ## Open Animation Replacer
 
-With Open Animation Replacer (OAR) installed, `ConditionEngine.dll` adds two OAR conditions, usable in any submod's `config.json` and in OAR's in-game editor:
+With Open Animation Replacer (OAR) installed, `ConditionEngine.dll` adds three OAR conditions, usable in any submod's `config.json` and in OAR's in-game editor:
 
 - `ConditionEngine`: the text `Preset` names a named condition (a preset, or one registered by a script or another plugin). A leading `@` is optional.
 - `ConditionEngineExpression`: the text `Expression` is any expression, compiled once per distinct text.
+- `ConditionEngineDial`: compares a dial with a number (`Dial`, `Comparison`, `Value`). Only dials that opt in with `"oar": true` (in the editor: *Animation mods (OAR) can read it*) can be read; the value is read at once, on any thread ([docs/oar-conditions.md](docs/oar-conditions.md#a-dial)).
 
 ```json
 {

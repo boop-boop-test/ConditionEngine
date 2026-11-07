@@ -213,6 +213,7 @@ set(CONDITION_ENGINE_DLL_SOURCES
     src/Dials/Engine.cpp
     src/Dials/Events.cpp
     src/Dials/GameHost.cpp
+    src/Dials/OarValues.cpp
     src/Dials/Papyrus.cpp
     src/Dials/Serialization.cpp
     src/Dials/Service.cpp
@@ -269,7 +270,7 @@ source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES
 option(CONDITIONENGINE_BUILD_TESTS "Build ConditionEngine unit tests" ${PROJECT_IS_TOP_LEVEL})
 if(PROJECT_IS_TOP_LEVEL AND CONDITIONENGINE_BUILD_TESTS)
     add_executable(condition-engine-tests tests/ExpressionTests.cpp tests/ValueTests.cpp tests/WeatherTests.cpp tests/GearTests.cpp tests/PeopleTests.cpp
-        tests/DialsTests.cpp tests/Benchmark.cpp src/Dials/Definition.cpp src/Dials/Engine.cpp ${CONDITION_ENGINE_SOURCES})
+        tests/DialsTests.cpp tests/Benchmark.cpp src/Dials/Definition.cpp src/Dials/Engine.cpp src/Dials/OarValues.cpp ${CONDITION_ENGINE_SOURCES})
     target_compile_definitions(condition-engine-tests PRIVATE DIALS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
     target_compile_definitions(condition-engine-tests PRIVATE CONDITIONENGINE_STATIC)
     target_include_directories(condition-engine-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include "${CONDITIONENGINE_GENERATED_DIR}")

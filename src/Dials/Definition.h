@@ -148,6 +148,7 @@ namespace ConditionEngine::Dials {
 
         std::string track;  // actor dials: which actors have it (a condition); empty = the player only
         bool persist = true;
+        bool oar = false;  // Open Animation Replacer's ConditionEngineDial condition may read it (docs/oar-conditions.md)
         std::vector<double> thresholds;  // a continuous change across one sends Dials_Changed
 
         std::vector<std::string> provides;  // feeds these combined ConditionEngine values ($hunger ...)

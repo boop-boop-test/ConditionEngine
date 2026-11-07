@@ -11,7 +11,7 @@ overview; `include/ConditionEngine/ConditionEngineAPI.h` and `ConditionEngine.ps
 | [Registering your own condition types](registering-condition-types.md) | New types with a schema and a callback, so they work in every expression and editor |
 | [Watching conditions](watching-conditions.md) | Getting told when a result changes: watches, list watches, mod events, poll intervals |
 | [Values](values.md) | Reading numbers, pushing values, named values, value types and value watches |
-| [OAR conditions](oar-conditions.md) | Using presets and expressions in Open Animation Replacer submods |
+| [OAR conditions](oar-conditions.md) | Using presets, expressions and dials in Open Animation Replacer submods |
 | [Survival needs](survival.md) | The built-in `$hunger`, `$fatigue`, `$cold`, `$warmth`, `$coverage`, `$dirt`, `$blood`: which mod answers, the shared scale, adding a source |
 | [Dials](dials.md) | Values that rules drive: events, conditions, rates, timers, keys; per actor; saved; the editor |
 | [SkyrimNet](skyrimnet.md) | `get_dials()` and `condition_engine()` in prompts; SkyrimNet events, memories, world knowledge and AI actions from dials |

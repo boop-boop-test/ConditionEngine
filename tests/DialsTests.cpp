@@ -1,8 +1,9 @@
 // DialsTests.cpp - Out-of-game tests for the dial format and engine (src/Dials/Definition, Engine).
-// A fake host stands in for ConditionEngine: conditions are flags, values are numbers, by name.
+// OarValues, the copy OAR reads. A fake host stands in for ConditionEngine: conditions are flags, values are numbers, by name.
 
 #include "../src/Dials/Definition.h"
 #include "../src/Dials/Engine.h"
+#include "../src/Dials/OarValues.h"
 
 #include <cmath>
 #include <cstdio>
@@ -719,6 +720,53 @@ namespace {
         Check(e.FireRule("alarm", 1, kPlayer) && e.TakeSends().size() == 1, "Test runs a send rule");
     }
 
+    // ── OAR: the values OAR's ConditionEngineDial reads ─────────────────────
+
+    void OarTests() {
+        constexpr ActorKey kLydia = 0xA2C94;
+        Check(!Parse("plain", "{}").oar, "dials are not shared with OAR by default");
+        Check(!Parse("plain", "{}").ToJson().contains("oar"), "oar: false is not written");
+        const auto sharedDef = Parse("Alarm", R"({"range": [0, 10], "oar": true, "rules": [{"while": true, "rate": 1}]})");
+        Check(sharedDef.oar && sharedDef.ToJson().value("oar", false), "oar: true parses and is written back");
+        Check(HasError(R"({"oar": "yes"})", "oar"), "oar must be true or false");
+
+        FakeHost host;
+        Engine e(host);
+        auto& oar = OarValues::Get();
+        oar.Clear();
+        const auto mood = Parse("Mood", R"({"kind": "choice", "options": ["Calm", "Tense"], "scope": "actor", "track": "true", "oar": true})");
+        const auto hidden = Parse("Hidden", R"({"range": [0, 100], "default": 7})");
+        for (const auto* def : {&sharedDef, &mood, &hidden}) {
+            Define(e, *def);
+            oar.Define(*def, e.Values(def->id));  // as the service does when a dial goes live
+        }
+        Check(oar.SharedCount() == 2, "two dials shared with OAR");
+        e.Set("Mood", kLydia, 1, "test");
+        e.Tick(3, 0, {kPlayer, kLydia});
+        for (const auto& c : e.TakeChanges()) oar.Update(c.id, c.actor, c.value);  // as Publish does
+
+        auto r = oar.Read("alarm", kLydia, true);
+        Check(r.status == OarValues::Status::Ok && Near(r.value, Get(e, "Alarm")) && r.value > 0,
+              "a global dial: one value for every actor, any case");
+        r = oar.Read("Mood", kLydia, true);
+        Check(r.status == OarValues::Status::Ok && Near(r.value, 1) && r.text == "1 (Tense)", "an actor dial: " + r.text);
+        r = oar.Read("Mood", kPlayer);
+        Check(r.status == OarValues::Status::Ok && Near(r.value, 0), "an actor without a value reads the default");
+        r = oar.Read("Hidden", kPlayer, true);
+        Check(r.status == OarValues::Status::NotShared && r.text.find("oar") != std::string::npos,
+              "a dial without oar: true is not readable, and says why");
+        Check(oar.Read("Nobody", kPlayer).status == OarValues::Status::Unknown, "an unknown dial");
+
+        oar.Update("Hidden", 0, 50);
+        Check(oar.Read("Hidden", 0).status == OarValues::Status::NotShared, "changes of unshared dials are ignored");
+        oar.ClearValues();
+        Check(Near(oar.Read("Mood", kLydia).value, 0) && Near(oar.Read("Alarm", 0).value, 0),
+              "a new session: values back to the defaults, dials kept");
+        oar.Remove("Alarm");
+        Check(oar.Read("Alarm", 0).status == OarValues::Status::Unknown && oar.SharedCount() == 1, "a removed dial");
+        oar.Clear();
+    }
+
     // ── The shipped examples (and so the editor's templates) are valid ───────
     void ExampleFileTests() {
 #ifdef DIALS_SOURCE_DIR
@@ -754,5 +802,6 @@ void RunDialsTests(void (*check)(bool ok, const std::string& what)) {
     PersistenceTests();
     SkyrimNetTests();
     SendTests();
+    OarTests();
     ExampleFileTests();
 }

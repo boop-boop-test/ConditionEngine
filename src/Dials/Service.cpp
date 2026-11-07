@@ -1,5 +1,6 @@
 #include "Service.h"
 #include "CEApi.h"
+#include "OarValues.h"
 #include "Settings.h"
 
 #include <format>
@@ -384,6 +385,7 @@ namespace ConditionEngine::Dials {
                 engine_.Remove(key);
                 UnregisterNames(layer.id);
             }
+            OarValues::Get().Remove(key);
             layer.errors.clear();
             RefreshUsage();
             o.ok = true;
@@ -395,12 +397,16 @@ namespace ConditionEngine::Dials {
             auto defined = engine_.Define(*def);
             o.errors.insert(o.errors.end(), defined.errors.begin(), defined.errors.end());
             o.ok = defined.ok;
-            if (defined.ok) RegisterNames(*def, o.warnings);
+            if (defined.ok) {
+                RegisterNames(*def, o.warnings);
+                OarValues::Get().Define(*def, engine_.Values(def->id));
+            }
         }
         if (!o.ok && engine_.Exists(key)) {
             engine_.Remove(key);
             UnregisterNames(layer.id);
         }
+        if (!o.ok) OarValues::Get().Remove(key);
         layer.errors = o.errors;
         layer.warnings = o.warnings;
         RefreshUsage();
@@ -619,7 +625,9 @@ namespace ConditionEngine::Dials {
             for (const auto& [_, s] : subscribers_) subscribers.push_back(s);
         }
         auto* source = SKSE::GetModCallbackEventSource();
+        auto& oar = OarValues::Get();
         for (const auto& c : changes) {
+            oar.Update(c.id, c.actor, c.value);
             RE::Actor* actor = c.actor ? ActorOf(c.actor) : nullptr;
             if (c.actor == 0) {
                 ce.SetGlobalValue(c.id.c_str(), c.value, 0.0f);
@@ -656,6 +664,7 @@ namespace ConditionEngine::Dials {
     void Service::OnSessionEnd() {
         session_.store(false);
         engine_.ClearValues();
+        OarValues::Get().ClearValues();
         std::lock_guard lock(outboxMutex_);
         outbox_.clear();
     }

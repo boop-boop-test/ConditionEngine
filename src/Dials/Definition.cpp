@@ -141,7 +141,7 @@ namespace ConditionEngine::Dials {
 
         const std::set<std::string, std::less<>> kDialKeys = {
             "label", "description", "category", "icon", "unit", "enabled", "kind", "range", "min", "max", "default",
-            "integer", "precision", "options", "scope", "track", "actors", "persist", "thresholds", "provides",
+            "integer", "precision", "options", "scope", "track", "actors", "persist", "oar", "thresholds", "provides",
             "priority", "conditions", "rules", "source"};
 
         std::optional<Rule> ParseRule(const DialDef& def, std::size_t index, const nlohmann::json& j,
@@ -585,6 +585,7 @@ namespace ConditionEngine::Dials {
         j["scope"] = scope == Scope::Global ? "global" : track.empty() ? "player" : "actor";
         if (scope == Scope::Actor && !track.empty()) j["track"] = track;
         if (!persist) j["persist"] = false;
+        if (oar) j["oar"] = true;
         if (!thresholds.empty()) j["thresholds"] = thresholds;
         if (!provides.empty()) {
             j["provides"] = provides;
@@ -743,6 +744,7 @@ namespace ConditionEngine::Dials {
             def.track.clear();
         }
         ReadBool(j, "persist", def.persist, errors, where);
+        ReadBool(j, "oar", def.oar, errors, where);
 
         if (auto it = j.find("thresholds"); it != j.end()) {
             if (it->is_array() && std::all_of(it->begin(), it->end(), [](const auto& v) { return v.is_number(); })) {

@@ -1,12 +1,13 @@
 # OAR conditions
 
-With Open Animation Replacer installed, `ConditionEngine.dll` adds two conditions that any OAR submod can use in its
+With Open Animation Replacer installed, `ConditionEngine.dll` adds three conditions that any OAR submod can use in its
 `config.json`, and that OAR's in-game editor offers:
 
 | OAR condition | Field | Reads |
 |---|---|---|
 | `ConditionEngine` | `Preset` | A named condition: from a preset file, a script, or another plugin. The leading `@` is optional |
 | `ConditionEngineExpression` | `Expression` | Any expression, compiled once per distinct text |
+| `ConditionEngineDial` | `Dial`, `Comparison`, `Value` | A [dial](dials.md) that opted in, compared with a number |
 
 ## A named condition
 
@@ -37,6 +38,38 @@ and use it in the submod's `config.json`:
     "Expression": "@IsNight && !Sneaking"
 }
 ```
+
+## A dial
+
+A dial is only readable from OAR when it says so. In the dial's JSON:
+
+```json
+{ "dials": { "MyMod_Alarm": { "range": [0, 10], "oar": true, "rules": [{"when": "Combat", "set": 10}] } } }
+```
+
+or in the editor (`ce ui`): the dial's **More settings**, **Animation mods (OAR) can read it**. The editor's *Use the
+dial in prompts and scripts* section then has a `config.json` line to copy. Then in the submod:
+
+```json
+{
+    "condition": "ConditionEngineDial",
+    "requiredPlugin": "ConditionEngine",
+    "Dial": "MyMod_Alarm",
+    "Comparison": ">=",
+    "Value": { "value": 5 }
+}
+```
+
+- `Value` is OAR's usual number field: a fixed number, a global, an actor value or a graph variable.
+- Toggles read 0 (off) and 1 (on). Choice dials read the option's number: `["Calm", "Tense"]` is 0 and 1.
+- A global dial has one value for every actor. An actor dial reads that actor's value, or the default for an actor
+  without one.
+- The value is read at once, on any thread: no watch and no false first read, unlike the two conditions above. It
+  is the value the dial last published, at most one tick old (200 ms) and within the dial's `precision`.
+- A dial without `"oar": true`, or a name no dial has, reads false. OAR's editor shows the dial's current value for
+  the selected actor, or why there is none.
+- The dial's named conditions (`@Name`) work in the `ConditionEngine` condition whether or not the dial opts in;
+  `oar` only governs `ConditionEngineDial`.
 
 ## How it behaves
 
