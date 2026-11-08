@@ -54,6 +54,7 @@ dial in prompts and scripts* section then has a `config.json` line to copy. Then
 {
     "condition": "ConditionEngineDial",
     "requiredPlugin": "ConditionEngine",
+    "requiredVersion": "1.6.0.0",
     "Dial": "MyMod_Alarm",
     "Comparison": ">=",
     "Value": { "value": 5 }
@@ -82,6 +83,7 @@ dial in prompts and scripts* section then has a `config.json` line to copy. Then
   evaluation for an actor reads false and starts the watch; pairs not evaluated for a minute are dropped.
 - Without OAR nothing registers, and the log says so in one line.
 
-Configs need ConditionEngine 1.2.0 or later, the first release with the OAR conditions.
+Configs need ConditionEngine 1.2.0 or later, the first release with the OAR conditions; `ConditionEngineDial`
+needs 1.6.0.
 
 Use `ce eval <expression>` in the console to check what an expression reads for the selected actor.

@@ -1176,7 +1176,7 @@
     if (j.oar === true) {
       const value = kind === 'toggle' ? 1 : kind === 'choice' && opts.length ? opts[opts.length - 1][0] : 50;
       const comparison = kind === 'number' ? '>=' : '==';
-      rows.push(['OAR config.json', JSON.stringify({ condition: 'ConditionEngineDial', requiredPlugin: 'ConditionEngine', Dial: id, Comparison: comparison, Value: { value } })]);
+      rows.push(['OAR config.json', JSON.stringify({ condition: 'ConditionEngineDial', requiredPlugin: 'ConditionEngine', requiredVersion: '1.6.0.0', Dial: id, Comparison: comparison, Value: { value } })]);
     }
     return rows;
   }
